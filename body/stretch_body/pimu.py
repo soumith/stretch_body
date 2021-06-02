@@ -505,7 +505,7 @@ class Pimu(Device):
         try:
             t = psutil.sensors_temperatures()['coretemp']
         except:
-            t=[25.0] #Virtual machines won't report back, faux value
+            return 25.0
         for c in t:
             cpu_temp = max(cpu_temp, c.current)
         return cpu_temp
