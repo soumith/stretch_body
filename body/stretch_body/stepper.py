@@ -74,7 +74,8 @@ class Stepper(Device):
         Device.__init__(self,name)
         self.usb=usb
         self.lock=threading.RLock()
-        self.transport = Transport(usb=self.usb, logger=self.logger)
+        self.transport = Transport(usb_name=self.usb, logger=self.logger)
+
         self._command = {'mode':0, 'x_des':0,'v_des':0,'a_des':0,'stiffness':1.0,'i_feedforward':0.0,'i_contact_pos':0,'i_contact_neg':0,'incr_trigger':0}
         self.status = {'mode': 0, 'effort': 0, 'current':0,'pos': 0, 'vel': 0, 'err':0,'diag': 0,'timestamp': 0, 'debug':0,'guarded_event':0,
                        'transport': self.transport.status,'pos_calibrated':0,'runstop_on':0,'near_pos_setpoint':0,'near_vel_setpoint':0,
@@ -103,10 +104,7 @@ class Stepper(Device):
         with self.lock:
             self.hw_valid=self.transport.startup()
             if self.hw_valid:
-                #Pull board info
-                self.transport.payload_out[0] = RPC_GET_STEPPER_BOARD_INFO
-                self.transport.queue_rpc(1, self.rpc_board_info_reply)
-                self.transport.step(exiting=False)
+                self.transport.execute_rpc(RPCRequest(id=RPC_GET_STEPPER_BOARD_INFO,callback=self.rpc_board_info_reply))
                 #Check that protocol matches
                 if not(self.valid_firmware_protocol == self.board_info['protocol_version']):
                     protocol_msg = """
@@ -138,60 +136,72 @@ class Stepper(Device):
             self.hw_valid = False
             self.logger.debug('Shutting down Stepper on: ' + self.usb)
             self.enable_safety()
-            self.push_command(exiting=True)
+            self.push_command()
             self.transport.stop()
 
-    def push_command(self,exiting=False):
-        if not self.hw_valid:
-            return
+    # ###############################################
+
+    def push_command(self):
+        if self.hw_valid:
+            self._queue_command()
+            self.transport.execute_queue(pull=False)
+
+    async def push_command_async(self):
+        if self.hw_valid:
+            self._queue_command()
+            await self.transport.execute_queue_async(pull=False)
+
+    def pull_status(self):
+        if self.hw_valid:
+            self._queue_status()
+            self.transport.execute_queue(pull=True)
+
+    async def pull_status_async(self):
+        if self.hw_valid:
+            self._queue_status()
+            await self.transport.execute_queue_async(pull=True)
+
+    # ###############################################
+    def _queue_status(self):
+        if self._dirty_read_gains_from_flash:
+            rpc=RPCRequest(id=RPC_READ_GAINS_FROM_FLASH, callback=self.rpc_read_gains_from_flash_reply)
+            self.transport.queue_rpc(rpc=rpc, pull=True)
+            self._dirty_read_gains_from_flash = False
+        rpc=RPCRequest(id=RPC_GET_STATUS, callback=self.rpc_status_reply)
+        self.transport.queue_rpc(rpc=rpc, pull=True)
+
+    def _queue_command(self):
         with self.lock:
             if self._dirty_load_test:
-                self.transport.payload_out[0] = RPC_LOAD_TEST
-                self.transport.payload_out[1:] = self.load_test_payload
-                self.transport.queue_rpc2(1024 + 1, self.rpc_load_test_reply)
+                rpc=RPCRequest(id=RPC_LOAD_TEST, callback=self.rpc_load_test_reply)
+                rpc.pack_n_bytes(self.load_test_payload,1024)
+                self.transport.queue_rpc(rpc=rpc,pull=False)
                 self._dirty_load_test=False
 
             if self._dirty_motion_limits:
-                self.transport.payload_out[0] = RPC_SET_MOTION_LIMITS
-                sidx = self.pack_motion_limits(self.transport.payload_out, 1)
-                self.transport.queue_rpc2(sidx, self.rpc_motion_limits_reply)
+                rpc = RPCRequest(id=RPC_SET_MOTION_LIMITS, callback=self.rpc_motion_limits_reply)
+                self.pack_motion_limits(rpc)
+                self.transport.queue_rpc(rpc=rpc,pull=False)
                 self._dirty_motion_limits = False
 
             if self._dirty_trigger:
-                self.transport.payload_out[0] = RPC_SET_TRIGGER
-                sidx = self.pack_trigger(self.transport.payload_out, 1)
-                self.transport.queue_rpc2(sidx, self.rpc_trigger_reply)
+                rpc = RPCRequest(id=RPC_SET_TRIGGER, callback=self.rpc_trigger_reply)
+                self.pack_trigger(rpc)
+                self.transport.queue_rpc(rpc=rpc, pull=False)
                 self._trigger=0
                 self._dirty_trigger = False
 
             if self._dirty_gains:
-                self.transport.payload_out[0] = RPC_SET_GAINS
-                sidx = self.pack_gains(self.transport.payload_out, 1)
-                self.transport.queue_rpc2(sidx, self.rpc_gains_reply)
+                rpc = RPCRequest(id=RPC_SET_GAINS, callback=self.rpc_gains_reply)
+                self.pack_gains(rpc)
+                self.transport.queue_rpc(rpc=rpc, pull=False)
                 self._dirty_gains=False
 
             if self._dirty_command:
-                self.transport.payload_out[0] = RPC_SET_COMMAND
-                sidx = self.pack_command(self.transport.payload_out, 1)
-                self.transport.queue_rpc2(sidx, self.rpc_command_reply)
+                rpc = RPCRequest(id=RPC_SET_COMMAND, callback=self.rpc_command_reply)
+                self.pack_command(rpc)
+                self.transport.queue_rpc(rpc=rpc, pull=False)
                 self._dirty_command=False
-            self.transport.step2(exiting=exiting)
-
-
-    def pull_status(self, exiting=False):
-        if not self.hw_valid:
-            return
-        with self.lock:
-            if self._dirty_read_gains_from_flash:
-                self.transport.payload_out[0] = RPC_READ_GAINS_FROM_FLASH
-                self.transport.queue_rpc(1, self.rpc_read_gains_from_flash_reply)
-                self._dirty_read_gains_from_flash = False
-
-            # Queue Status RPC
-            self.transport.payload_out[0] = RPC_GET_STATUS
-            sidx = 1
-            self.transport.queue_rpc(sidx, self.rpc_status_reply)
-            self.transport.step(exiting=exiting)
 
     def pretty_print(self):
         print('-----------')
@@ -222,7 +232,7 @@ class Stepper(Device):
         print('       In Safety Event:', self.status['in_safety_event'])
         print('       Waiting on Sync:', self.status['waiting_on_sync'])
         print('Timestamp', self.status['timestamp'])
-        print('Read error', self.transport.status['read_error'])
+        #print('Read error', self.transport.status['read_error'])
         print('Board version:', self.board_info['board_version'])
         print('Firmware version:', self.board_info['firmware_version'])
     # ###########################################################################
@@ -366,7 +376,7 @@ class Stepper(Device):
             if stiffness is not None:
                 self._command['stiffness'] = max(0, min(1.0, stiffness))
             else:
-                self._command['stiffness'] =1
+                self._command['stiffness'] =1.0
 
             if i_feedforward is not None:
                 self._command['i_feedforward'] = i_feedforward
@@ -386,7 +396,7 @@ class Stepper(Device):
                 self._command['i_contact_neg'] = i_contact_neg
             else:
                 self._command['i_contact_neg'] = self.params['gains']['i_contact_neg']
-            #print(time.time(),self._command['x_des'],self._command['incr_trigger'],self._command['v_des'],self._command['a_des'])
+
             self._dirty_command=True
 
 
@@ -476,16 +486,13 @@ class Stepper(Device):
                 if p%10==0:
                     sys.stdout.write('.')
                     sys.stdout.flush()
-                self.transport.payload_out[0] = RPC_SET_ENC_CALIB
-                self.transport.payload_out[1] = p
-                sidx=2
+                rpc=RPCRequest(RPC_SET_ENC_CALIB,self.rpc_enc_calib_reply)
+                rpc.pack_uint8_t(p)
                 for i in range(64):
-                    pack_float_t(self.transport.payload_out, sidx, data[p*64+i])
-                    sidx += 4
-                # print('Sending encoder calibration rpc of size',sidx)
-                self.transport.queue_rpc(sidx, self.rpc_enc_calib_reply)
-                self.transport.step()
+                    rpc.pack_float_t(data[p*64+i])
+                self.transport.execute_rpc(rpc)
             print('')
+
     def rpc_enc_calib_reply(self,reply):
         if reply[0] != RPC_REPLY_ENC_CALIB:
             print('Error RPC_REPLY_ENC_CALIB', reply[0])
@@ -502,10 +509,7 @@ class Stepper(Device):
         if not self.hw_valid:
             return
         with self.lock:
-            # Run immediately rather than queue
-            self.transport.payload_out[0] = RPC_SET_MENU_ON
-            self.transport.queue_rpc(1, self.rpc_menu_on_reply)
-            self.transport.step()
+            self.transport.execute_rpc(RPCRequest(RPC_SET_MENU_ON,self.rpc_menu_on_reply))
 
     def print_menu(self):
         with self.lock:
@@ -515,172 +519,30 @@ class Stepper(Device):
         if not self.hw_valid:
             return
         with self.lock:
-            self.transport.ser.write(x)
+            self.transport.ser_sync.write(x)
             time.sleep(0.1)
             reply=[]
-            while self.transport.ser.inWaiting():
-                r=self.transport.ser.readline()
+            while self.transport.ser_sync.inWaiting():
+                r=self.transport.ser_sync.readline()
                 if do_print:
                     print(r, end=' ')
                 reply.append(r)
             return reply
 
 
-    # ################Transport Callbacks #####################
-    def unpack_board_info(self,s):
-        with self.lock:
-            sidx=0
-            self.board_info['board_version'] = unpack_string_t(s[sidx:], 20).strip('\x00')
-            sidx += 20
-            self.board_info['firmware_version'] = unpack_string_t(s[sidx:], 20).strip('\x00')
-            self.board_info['protocol_version'] = self.board_info['firmware_version'][self.board_info['firmware_version'].rfind('p'):]
-            sidx += 20
-            return sidx
-
-    def unpack_status(self,s):
-        with self.lock:
-            sidx=0
-            self.status['mode']=unpack_uint8_t(s[sidx:]);sidx+=1
-            self.status['effort'] = unpack_float_t(s[sidx:]);sidx+=4
-            self.status['current']=self.effort_to_current(self.status['effort'])
-            self.status['pos'] = unpack_double_t(s[sidx:]);sidx+=8
-            self.status['vel'] = unpack_float_t(s[sidx:]);sidx+=4
-            self.status['err'] = unpack_float_t(s[sidx:]);sidx += 4
-            self.status['diag'] = unpack_uint32_t(s[sidx:]);sidx += 4
-            self.status['timestamp'] = self.timestamp.set(unpack_uint32_t(s[sidx:]));sidx += 4
-            self.status['debug'] = unpack_float_t(s[sidx:]);sidx += 4
-            self.status['guarded_event'] = unpack_uint32_t(s[sidx:]);sidx += 4
-            self.status['pos_calibrated'] =self.status['diag'] & DIAG_POS_CALIBRATED > 0
-            self.status['runstop_on'] =self.status['diag'] & DIAG_RUNSTOP_ON > 0
-            self.status['near_pos_setpoint'] =self.status['diag'] & DIAG_NEAR_POS_SETPOINT > 0
-            self.status['near_vel_setpoint'] = self.status['diag'] & DIAG_NEAR_VEL_SETPOINT > 0
-            self.status['is_moving'] =self.status['diag'] & DIAG_IS_MOVING > 0
-            self.status['at_current_limit'] =self.status['diag'] & DIAG_AT_CURRENT_LIMIT > 0
-            self.status['is_mg_accelerating'] = self.status['diag'] & DIAG_IS_MG_ACCELERATING > 0
-            self.status['is_mg_moving'] =self.status['diag'] & DIAG_IS_MG_MOVING > 0
-            self.status['calibration_rcvd'] = self.status['diag'] & DIAG_CALIBRATION_RCVD > 0
-            self.status['in_guarded_event'] = self.status['diag'] & DIAG_IN_GUARDED_EVENT > 0
-            self.status['in_safety_event'] = self.status['diag'] & DIAG_IN_SAFETY_EVENT > 0
-            self.status['waiting_on_sync'] = self.status['diag'] & DIAG_WAITING_ON_SYNC > 0
-            return sidx
-
-
-    def unpack_gains(self,s):
-        with self.lock:
-            sidx=0
-            self.gains['pKp_d'] = unpack_float_t(s[sidx:]);sidx+=4
-            self.gains['pKi_d'] = unpack_float_t(s[sidx:]);sidx += 4
-            self.gains['pKd_d'] = unpack_float_t(s[sidx:]);sidx += 4
-            self.gains['pLPF'] = unpack_float_t(s[sidx:]);sidx += 4
-            self.gains['pKi_limit'] = unpack_float_t(s[sidx:]);sidx += 4
-            self.gains['vKp_d'] = unpack_float_t(s[sidx:]);sidx += 4
-            self.gains['vKi_d'] = unpack_float_t(s[sidx:]);sidx += 4
-            self.gains['vKd_d'] = unpack_float_t(s[sidx:]);sidx += 4
-            self.gains['vLPF'] = unpack_float_t(s[sidx:]);sidx += 4
-            self.gains['vKi_limit'] = unpack_float_t(s[sidx:]);sidx += 4
-            self.gains['vTe_d'] = unpack_float_t(s[sidx:]);sidx += 4
-            self.gains['iMax_pos'] = unpack_float_t(s[sidx:]);sidx += 4
-            self.gains['iMax_neg'] = unpack_float_t(s[sidx:]);sidx += 4
-            self.gains['phase_advance_d'] = unpack_float_t(s[sidx:]);sidx += 4
-            self.gains['pos_near_setpoint_d'] = unpack_float_t(s[sidx:]);sidx += 4
-            self.gains['vel_near_setpoint_d'] = unpack_float_t(s[sidx:]);sidx += 4
-            self.gains['vel_status_LPF'] = unpack_float_t(s[sidx:]);sidx += 4
-            self.gains['effort_LPF'] = unpack_float_t(s[sidx:]);sidx += 4
-            self.gains['safety_stiffness'] = unpack_float_t(s[sidx:]);sidx += 4
-            self.gains['i_safety_feedforward'] = unpack_float_t(s[sidx:]);sidx += 4
-            config = unpack_uint8_t(s[sidx:]);sidx += 1
-            self.gains['safety_hold']= int(config & CONFIG_SAFETY_HOLD>0)
-            self.gains['enable_runstop'] = int(config & CONFIG_ENABLE_RUNSTOP>0)
-            self.gains['enable_sync_mode'] = int(config & CONFIG_ENABLE_SYNC_MODE>0)
-            self.gains['enable_guarded_mode'] = int(config & CONFIG_ENABLE_GUARDED_MODE > 0)
-            self.gains['flip_encoder_polarity'] = int(config & CONFIG_FLIP_ENCODER_POLARITY > 0)
-            self.gains['flip_effort_polarity'] = int(config & CONFIG_FLIP_EFFORT_POLARITY > 0)
-            return sidx
-
-    def pack_motion_limits(self,s,sidx):
-        with self.lock:
-            pack_float_t(s, sidx, self.motion_limits[0])
-            sidx += 4
-            pack_float_t(s, sidx, self.motion_limits[1])
-            sidx += 4
-            return sidx
-
-    def pack_command(self,s,sidx):
-        with self.lock:
-            pack_uint8_t(s, sidx, self._command['mode'])
-            sidx += 1
-            pack_float_t(s, sidx, self._command['x_des'])
-            sidx += 4
-            pack_float_t(s, sidx, self._command['v_des'])
-            sidx += 4
-            pack_float_t(s, sidx, self._command['a_des'])
-            sidx += 4
-            pack_float_t(s, sidx, self._command['stiffness'])
-            sidx += 4
-            pack_float_t(s, sidx, self._command['i_feedforward'])
-            sidx += 4
-            pack_float_t(s, sidx, self._command['i_contact_pos'])
-            sidx += 4
-            pack_float_t(s, sidx, self._command['i_contact_neg'])
-            sidx += 4
-            pack_uint8_t(s, sidx, self._command['incr_trigger'])
-            sidx += 1
-            return sidx
-
-    def pack_gains(self,s,sidx):
-        with self.lock:
-            pack_float_t(s, sidx, self.gains['pKp_d']);sidx += 4
-            pack_float_t(s, sidx, self.gains['pKi_d']);sidx += 4
-            pack_float_t(s, sidx, self.gains['pKd_d']);sidx += 4
-            pack_float_t(s, sidx, self.gains['pLPF']);sidx += 4
-            pack_float_t(s, sidx, self.gains['pKi_limit']);sidx += 4
-            pack_float_t(s, sidx, self.gains['vKp_d']);sidx += 4
-            pack_float_t(s, sidx, self.gains['vKi_d']);sidx += 4
-            pack_float_t(s, sidx, self.gains['vKd_d']);sidx += 4
-            pack_float_t(s, sidx, self.gains['vLPF']);sidx += 4
-            pack_float_t(s, sidx, self.gains['vKi_limit']); sidx += 4
-            pack_float_t(s, sidx, self.gains['vTe_d']);sidx += 4
-            pack_float_t(s, sidx, self.gains['iMax_pos']);sidx += 4
-            pack_float_t(s, sidx, self.gains['iMax_neg']);sidx += 4
-            pack_float_t(s, sidx, self.gains['phase_advance_d']);sidx += 4
-            pack_float_t(s, sidx, self.gains['pos_near_setpoint_d']); sidx += 4
-            pack_float_t(s, sidx, self.gains['vel_near_setpoint_d']); sidx += 4
-            pack_float_t(s, sidx, self.gains['vel_status_LPF']);sidx += 4
-            pack_float_t(s, sidx, self.gains['effort_LPF']);sidx += 4
-            pack_float_t(s, sidx, self.gains['safety_stiffness']);sidx += 4
-            pack_float_t(s, sidx, self.gains['i_safety_feedforward']);sidx += 4
-            config=0
-            if self.gains['safety_hold']:
-                config=config | CONFIG_SAFETY_HOLD
-            if self.gains['enable_runstop']:
-                config=config | CONFIG_ENABLE_RUNSTOP
-            if self.gains['enable_sync_mode']:
-                config=config | CONFIG_ENABLE_SYNC_MODE
-            if self.gains['enable_guarded_mode']:
-                config=config | CONFIG_ENABLE_GUARDED_MODE
-            if self.gains['flip_encoder_polarity']:
-                config = config | CONFIG_FLIP_ENCODER_POLARITY
-            if self.gains['flip_effort_polarity']:
-                config = config | CONFIG_FLIP_EFFORT_POLARITY
-
-            pack_uint8_t(s, sidx, config); sidx += 1
-            return sidx
-
-    def pack_trigger(self, s, sidx):
-        with self.lock:
-            pack_uint32_t(s, sidx, self._trigger);
-            sidx += 4
-            pack_float_t(s, sidx, self._trigger_data);
-            sidx += 4
-            return sidx
+    # ################ RPC Callbacks #####################
 
     def rpc_load_test_reply(self, reply):
         if reply[0] == RPC_REPLY_LOAD_TEST:
+            pass_test=True
             d = reply[1:]
             for i in range(1024):
                 if d[i] != self.load_test_payload[(i + 1) % 1024]:
                     print('Load test bad data', d[i], self.load_test_payload[(i + 1) % 1024])
+                    pass_test=False
             self.load_test_payload = d
+            if pass_test:
+                print('Load Test data valid')
         else:
             print('Error RPC_REPLY_LOAD_TEST', reply[0])
 
@@ -721,3 +583,127 @@ class Stepper(Device):
             nr = self.unpack_gains(reply[1:])
         else:
             print('Error RPC_REPLY_READ_GAINS_FROM_FLASH', reply[0])
+
+    def unpack_board_info(self,reply):
+        with self.lock:
+            rpc=RPCReply(reply)
+            self.board_info['board_version'] = rpc.unpack_string_t(20).strip('\x00')
+            self.board_info['firmware_version'] = rpc.unpack_string_t(20).strip('\x00')
+            self.board_info['protocol_version'] = self.board_info['firmware_version'][self.board_info['firmware_version'].rfind('p'):]
+
+    def unpack_status(self,reply):
+        with self.lock:
+            rpc = RPCReply(reply)
+            self.status['mode']=rpc.unpack_uint8_t()
+            self.status['effort'] = rpc.unpack_float_t()
+            self.status['current']=self.effort_to_current(self.status['effort'])
+            self.status['pos'] = rpc.unpack_double_t()
+            self.status['vel'] = rpc.unpack_float_t()
+            self.status['err'] = rpc.unpack_float_t()
+            self.status['diag'] = rpc.unpack_uint32_t()
+            self.status['timestamp'] = self.timestamp.set(rpc.unpack_uint32_t())
+            self.status['debug'] = rpc.unpack_float_t()
+            self.status['guarded_event'] = rpc.unpack_uint32_t()
+            self.status['pos_calibrated'] =self.status['diag'] & DIAG_POS_CALIBRATED > 0
+            self.status['runstop_on'] =self.status['diag'] & DIAG_RUNSTOP_ON > 0
+            self.status['near_pos_setpoint'] =self.status['diag'] & DIAG_NEAR_POS_SETPOINT > 0
+            self.status['near_vel_setpoint'] = self.status['diag'] & DIAG_NEAR_VEL_SETPOINT > 0
+            self.status['is_moving'] =self.status['diag'] & DIAG_IS_MOVING > 0
+            self.status['at_current_limit'] =self.status['diag'] & DIAG_AT_CURRENT_LIMIT > 0
+            self.status['is_mg_accelerating'] = self.status['diag'] & DIAG_IS_MG_ACCELERATING > 0
+            self.status['is_mg_moving'] =self.status['diag'] & DIAG_IS_MG_MOVING > 0
+            self.status['calibration_rcvd'] = self.status['diag'] & DIAG_CALIBRATION_RCVD > 0
+            self.status['in_guarded_event'] = self.status['diag'] & DIAG_IN_GUARDED_EVENT > 0
+            self.status['in_safety_event'] = self.status['diag'] & DIAG_IN_SAFETY_EVENT > 0
+            self.status['waiting_on_sync'] = self.status['diag'] & DIAG_WAITING_ON_SYNC > 0
+
+
+
+    def unpack_gains(self,reply):
+        with self.lock:
+            rpc = RPCReply(reply)
+            self.gains['pKp_d'] = rpc.unpack_float_t()
+            self.gains['pKi_d'] = rpc.unpack_float_t()
+            self.gains['pKd_d'] = rpc.unpack_float_t()
+            self.gains['pLPF'] = rpc.unpack_float_t()
+            self.gains['pKi_limit'] = rpc.unpack_float_t()
+            self.gains['vKp_d'] = rpc.unpack_float_t()
+            self.gains['vKi_d'] = rpc.unpack_float_t()
+            self.gains['vKd_d'] = rpc.unpack_float_t()
+            self.gains['vLPF'] = rpc.unpack_float_t()
+            self.gains['vKi_limit'] = rpc.unpack_float_t()
+            self.gains['vTe_d'] = rpc.unpack_float_t()
+            self.gains['iMax_pos'] = rpc.unpack_float_t()
+            self.gains['iMax_neg'] = rpc.unpack_float_t()
+            self.gains['phase_advance_d'] = rpc.unpack_float_t()
+            self.gains['pos_near_setpoint_d'] = rpc.unpack_float_t()
+            self.gains['vel_near_setpoint_d'] = rpc.unpack_float_t()
+            self.gains['vel_status_LPF'] = rpc.unpack_float_t()
+            self.gains['effort_LPF'] = rpc.unpack_float_t()
+            self.gains['safety_stiffness'] = rpc.unpack_float_t()
+            self.gains['i_safety_feedforward'] = rpc.unpack_float_t()
+            config = rpc.unpack_uint8_t()
+            self.gains['safety_hold']= int(config & CONFIG_SAFETY_HOLD>0)
+            self.gains['enable_runstop'] = int(config & CONFIG_ENABLE_RUNSTOP>0)
+            self.gains['enable_sync_mode'] = int(config & CONFIG_ENABLE_SYNC_MODE>0)
+            self.gains['enable_guarded_mode'] = int(config & CONFIG_ENABLE_GUARDED_MODE > 0)
+            self.gains['flip_encoder_polarity'] = int(config & CONFIG_FLIP_ENCODER_POLARITY > 0)
+            self.gains['flip_effort_polarity'] = int(config & CONFIG_FLIP_EFFORT_POLARITY > 0)
+
+    def pack_motion_limits(self,rpc):
+        rpc.pack_float_t(self.motion_limits[0])
+        rpc.pack_float_t(self.motion_limits[1])
+
+    def pack_command(self,rpc):
+        rpc.pack_uint8_t(self._command['mode'])
+        rpc.pack_float_t(self._command['x_des'])
+        rpc.pack_float_t(self._command['v_des'])
+        rpc.pack_float_t(self._command['a_des'])
+        rpc.pack_float_t(self._command['stiffness'])
+        rpc.pack_float_t(self._command['i_feedforward'])
+        rpc.pack_float_t(self._command['i_contact_pos'])
+        rpc.pack_float_t(self._command['i_contact_neg'])
+        rpc.pack_uint8_t(self._command['incr_trigger'])
+
+    def pack_gains(self,rpc):
+            rpc.pack_float_t(self.gains['pKp_d'])
+            rpc.pack_float_t(self.gains['pKi_d'])
+            rpc.pack_float_t(self.gains['pKd_d'])
+            rpc.pack_float_t(self.gains['pLPF'])
+            rpc.pack_float_t(self.gains['pKi_limit'])
+            rpc.pack_float_t(self.gains['vKp_d'])
+            rpc.pack_float_t(self.gains['vKi_d'])
+            rpc.pack_float_t(self.gains['vKd_d'])
+            rpc.pack_float_t(self.gains['vLPF'])
+            rpc.pack_float_t(self.gains['vKi_limit'])
+            rpc.pack_float_t(self.gains['vTe_d'])
+            rpc.pack_float_t(self.gains['iMax_pos'])
+            rpc.pack_float_t(self.gains['iMax_neg'])
+            rpc.pack_float_t(self.gains['phase_advance_d'])
+            rpc.pack_float_t(self.gains['pos_near_setpoint_d'])
+            rpc.pack_float_t(self.gains['vel_near_setpoint_d'])
+            rpc.pack_float_t(self.gains['vel_status_LPF'])
+            rpc.pack_float_t(self.gains['effort_LPF'])
+            rpc.pack_float_t(self.gains['safety_stiffness'])
+            rpc.pack_float_t(self.gains['i_safety_feedforward'])
+            config=0
+            if self.gains['safety_hold']:
+                config=config | CONFIG_SAFETY_HOLD
+            if self.gains['enable_runstop']:
+                config=config | CONFIG_ENABLE_RUNSTOP
+            if self.gains['enable_sync_mode']:
+                config=config | CONFIG_ENABLE_SYNC_MODE
+            if self.gains['enable_guarded_mode']:
+                config=config | CONFIG_ENABLE_GUARDED_MODE
+            if self.gains['flip_encoder_polarity']:
+                config = config | CONFIG_FLIP_ENCODER_POLARITY
+            if self.gains['flip_effort_polarity']:
+                config = config | CONFIG_FLIP_EFFORT_POLARITY
+            rpc.pack_uint8_t(config)
+
+
+    def pack_trigger(self,rpc):
+        with self.lock:
+            rpc.pack_uint32_t(self._trigger)
+            rpc.pack_float_t(self._trigger_data)
+
