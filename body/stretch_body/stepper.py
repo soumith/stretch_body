@@ -124,8 +124,7 @@ class Stepper(Device):
                 self._dirty_gains = True
                 self.pull_status()
                 self.push_command()
-                return True
-            return False
+            return self.hw_valid
 
 
     #Configure control mode prior to calling this on process shutdown (or default to freewheel)
