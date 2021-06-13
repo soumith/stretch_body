@@ -8,6 +8,7 @@ import logging
 import aioserial
 import asyncio
 import traceback
+import threading
 
 # ######################################################
 class TransportError(Exception):
@@ -56,6 +57,7 @@ Receive data back:
 Each frame is also Cobbs encoded prior to transmission and Cobbs decoded upon receipt.
 
 """
+
 # #############################################################################################
 class AsyncTransactionHandler():
     """
@@ -433,10 +435,9 @@ class Transport():
         self.usb_name=usb_name
         self.logger=logger
         self.logger.debug('Starting TransportConnection on: ' + self.usb_name)
-        self.rpc_queue_pull = []
-        self.rpc_queue_push = []
         self.status = {}
         self.hw_valid=False
+        self.lock=threading.Lock()
 
     def startup(self):
         try:
@@ -467,34 +468,13 @@ class Transport():
     # #################################
     def execute_rpc(self, rpc):
         if self.hw_valid:
-            self.sync_handler.step_transaction(rpc)
+            with self.lock:
+                self.sync_handler.step_transaction(rpc)
 
     async def execute_rpc_async(self, rpc):
         if self.hw_valid:
+            # Acquire the lock in a worker thread, suspending us while waiting.
+            # See https://stackoverflow.com/questions/63420413/how-to-use-threading-lock-in-async-function-while-object-can-be-accessed-from-mu
+            await asyncio.get_event_loop().run_in_executor(None, self.lock.acquire)
             await self.async_handler.step_transaction(rpc)
-
-    def queue_rpc(self,rpc, pull):
-        if self.hw_valid:
-            if pull:
-                self.rpc_queue_pull.append(rpc)
-            else:
-                self.rpc_queue_push.append(rpc)
-
-    async def execute_queue_async(self,pull):
-        if self.hw_valid:
-            if pull:
-                while len(self.rpc_queue_pull):
-                    await self.execute_rpc_async(self.rpc_queue_pull.pop())
-            else:
-                while len(self.rpc_queue_push):
-                    await self.execute_rpc_async(self.rpc_queue_push.pop())
-
-    def execute_queue(self,pull):
-        if self.hw_valid:
-            if pull:
-                while len(self.rpc_queue_pull):
-                    self.execute_rpc(self.rpc_queue_pull.pop())
-            else:
-                while len(self.rpc_queue_push):
-                    self.execute_rpc(self.rpc_queue_push.pop())
-
+            self.lock.release()

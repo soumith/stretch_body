@@ -35,7 +35,6 @@ class Wacc(Device):
         Device.__init__(self, 'wacc')
         self.ext_status_cb=ext_status_cb
         self.ext_command_cb=ext_command_cb
-        self.lock=threading.RLock()
         self.config = self.params['config']
         self._dirty_config = True #Force push down
         self._dirty_command = False
@@ -53,33 +52,30 @@ class Wacc(Device):
     # ###########  Device Methods #############
 
     def startup(self):
-        with self.lock:
-            self.hw_valid=self.transport.startup()
-            if self.hw_valid:
-                self.transport.execute_rpc(RPCRequest(id=RPC_GET_WACC_BOARD_INFO, callback=self.rpc_board_info_reply))
-                # Check that protocol matches
-                if not(self.valid_firmware_protocol == self.board_info['protocol_version']):
-                    protocol_msg = """
-                    ----------------
-                    Firmware protocol mismatch on {0}.
-                    Protocol on board is {1}.
-                    Valid protocol is: {2}.
-                    Disabling device.
-                    Please upgrade the firmware and/or version of Stretch Body.
-                    ----------------
-                    """.format(self.name, self.board_info['protocol_version'], self.valid_firmware_protocol)
-                    self.logger.warn(textwrap.dedent(protocol_msg))
-                    self.hw_valid=False
-                    self.transport.stop()
-            if self.hw_valid:
-                self.push_command()
-                self.pull_status()
-            return self.hw_valid
+        self.hw_valid=self.transport.startup()
+        if self.hw_valid:
+            self.transport.execute_rpc(RPCRequest(id=RPC_GET_WACC_BOARD_INFO, callback=self.rpc_board_info_reply))
+            # Check that protocol matches
+            if not(self.valid_firmware_protocol == self.board_info['protocol_version']):
+                protocol_msg = """
+                ----------------
+                Firmware protocol mismatch on {0}.
+                Protocol on board is {1}.
+                Valid protocol is: {2}.
+                Disabling device.
+                Please upgrade the firmware and/or version of Stretch Body.
+                ----------------
+                """.format(self.name, self.board_info['protocol_version'], self.valid_firmware_protocol)
+                self.logger.warn(textwrap.dedent(protocol_msg))
+                self.hw_valid=False
+                self.transport.stop()
+        if self.hw_valid:
+            self.push_command()
+            self.pull_status()
+        return self.hw_valid
 
     def stop(self):
-        if not self.hw_valid:
-            return
-        with self.lock:
+        if self.hw_valid:
             self.hw_valid = False
             self.push_command()
             self.transport.stop()
@@ -102,46 +98,39 @@ class Wacc(Device):
 
     def push_command(self):
         if self.hw_valid:
-            self._queue_command()
-            self.transport.execute_queue(pull=False)
+            rpcs=self._queue_command()
+            for r in rpcs:
+                self.transport.execute_rpc(r)
 
     async def push_command_async(self):
         if self.hw_valid:
-            self._queue_command()
-            await self.transport.execute_queue_async(pull=False)
+            rpcs = self._queue_command()
+            for r in rpcs:
+                await self.transport.execute_rpc(r)
 
     def pull_status(self):
         if self.hw_valid:
-            self._queue_status()
-            self.transport.execute_queue(pull=True)
+            rpc = RPCRequest(id=RPC_GET_WACC_STATUS, callback=self.rpc_status_reply)
+            self.transport.execute_rpc(rpc)
 
     async def pull_status_async(self):
         if self.hw_valid:
-            self._queue_status()
-            await self.transport.execute_queue_async(pull=True)
-
-
-    def _queue_status(self,exiting=False):
-        if self.hw_valid:
-            with self.lock:
-                rpc = RPCRequest(id=RPC_GET_WACC_STATUS, callback=self.rpc_status_reply)
-                self.transport.queue_rpc(rpc=rpc, pull=True)
+            rpc = RPCRequest(id=RPC_GET_WACC_STATUS, callback=self.rpc_status_reply)
+            await self.transport.execute_rpc_async(rpc)
 
     def _queue_command(self):
-        if self.hw_valid:
-            with self.lock:
-                if self._dirty_config:
-                    rpc = RPCRequest(id=RPC_SET_WACC_CONFIG, callback=self.rpc_config_reply)
-                    self.pack_config(rpc)
-                    self.transport.queue_rpc(rpc=rpc, pull=False)
-                    self._dirty_config = False
+        rpcs=[]
+        if self._dirty_config:
+            rpcs.append(RPCRequest(id=RPC_SET_WACC_CONFIG, callback=self.rpc_config_reply))
+            self.pack_config(rpcs[-1])
+            self._dirty_config = False
 
-                if self._dirty_command:
-                    rpc = RPCRequest(id=RPC_SET_WACC_COMMAND, callback=self.rpc_command_reply)
-                    self.pack_command(rpc)
-                    self.transport.queue_rpc(rpc=rpc, pull=False)
-                    self._command['trigger'] =0
-                    self._dirty_command = False
+        if self._dirty_command:
+            rpcs.append(RPCRequest(id=RPC_SET_WACC_COMMAND, callback=self.rpc_command_reply))
+            self.pack_command(rpcs[-1])
+            self._command['trigger'] =0
+            self._dirty_command = False
+        return rpcs
 
     # ############################################################################################
 
@@ -164,37 +153,34 @@ class Wacc(Device):
 
     # ####################### Utility functions ####################################################
     def board_reset(self):
-        with self.lock:
-            self._command['trigger']=self._command['trigger']| TRIGGER_BOARD_RESET
-            self._dirty_command=True
+        self._command['trigger']=self._command['trigger']| TRIGGER_BOARD_RESET
+        self._dirty_command=True
 
     # ################Data Packing #####################
 
     def unpack_board_info(self,reply):
-        with self.lock:
-            rpc = RPCReply(reply)
-            self.board_info['board_version'] = rpc.unpack_string_t(20)
-            self.board_info['firmware_version'] = rpc.unpack_string_t(20)
-            self.board_info['protocol_version'] = self.board_info['firmware_version'][self.board_info['firmware_version'].rfind('p'):]
+        rpc = RPCReply(reply)
+        self.board_info['board_version'] = rpc.unpack_string_t(20)
+        self.board_info['firmware_version'] = rpc.unpack_string_t(20)
+        self.board_info['protocol_version'] = self.board_info['firmware_version'][self.board_info['firmware_version'].rfind('p'):]
 
 
     def unpack_status(self,reply):
-        with self.lock:
-            rpc = RPCReply(reply)
-            if self.ext_status_cb is not None:
-                self.ext_status_cb(rpc) #TODO: Document change in interface for ext_status_cb from v0.1.x
-            self.status['ax'] = rpc.unpack_float_t()
-            self.status['ay'] = rpc.unpack_float_t()
-            self.status['az'] = rpc.unpack_float_t()
-            self.status['a0'] = rpc.unpack_int16_t()
-            self.status['d0'] = rpc.unpack_uint8_t()
-            self.status['d1'] = rpc.unpack_uint8_t()
-            self.status['d2'] = rpc.unpack_uint8_t()
-            self.status['d3'] = rpc.unpack_uint8_t()
-            self.status['single_tap_count'] = rpc.unpack_uint32_t()
-            self.status['state'] = rpc.unpack_uint32_t()
-            self.status['timestamp'] = self.timestamp.set(rpc.unpack_uint32_t())
-            self.status['debug'] = rpc.unpack_uint32_t()
+        rpc = RPCReply(reply)
+        if self.ext_status_cb is not None:
+            self.ext_status_cb(rpc) #TODO: Document change in interface for ext_status_cb from v0.1.x
+        self.status['ax'] = rpc.unpack_float_t()
+        self.status['ay'] = rpc.unpack_float_t()
+        self.status['az'] = rpc.unpack_float_t()
+        self.status['a0'] = rpc.unpack_int16_t()
+        self.status['d0'] = rpc.unpack_uint8_t()
+        self.status['d1'] = rpc.unpack_uint8_t()
+        self.status['d2'] = rpc.unpack_uint8_t()
+        self.status['d3'] = rpc.unpack_uint8_t()
+        self.status['single_tap_count'] = rpc.unpack_uint32_t()
+        self.status['state'] = rpc.unpack_uint32_t()
+        self.status['timestamp'] = self.timestamp.set(rpc.unpack_uint32_t())
+        self.status['debug'] = rpc.unpack_uint32_t()
 
     def pack_command(self,rpc):
         if self.ext_command_cb is not None:  # Pack custom data first
@@ -204,13 +190,12 @@ class Wacc(Device):
         rpc.pack_uint32_t(self._command['trigger'])
 
     def pack_config(self,rpc):
-        with self.lock:
-            rpc.pack_uint8_t(self.config['accel_range_g'])
-            rpc.pack_float_t(self.config['accel_LPF'])
-            rpc.pack_float_t(self.config['ana_LPF'])
-            rpc.pack_uint8_t(self.config['accel_single_tap_dur'])
-            rpc.pack_uint8_t(self.config['accel_single_tap_thresh'])
-            rpc.pack_float_t(self.config['accel_gravity_scale'])
+        rpc.pack_uint8_t(self.config['accel_range_g'])
+        rpc.pack_float_t(self.config['accel_LPF'])
+        rpc.pack_float_t(self.config['ana_LPF'])
+        rpc.pack_uint8_t(self.config['accel_single_tap_dur'])
+        rpc.pack_uint8_t(self.config['accel_single_tap_thresh'])
+        rpc.pack_float_t(self.config['accel_gravity_scale'])
 
 
     # ################Transport Callbacks #####################
