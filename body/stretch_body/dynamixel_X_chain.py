@@ -72,32 +72,32 @@ class DynamixelXChain(Device):
             self.motors[mk].stop()
 
 
-    def pull_status(self):
+    async def pull_status_async(self):
         if not self.hw_valid:
             return
         try:
             ts = time.time()
             if self.params['use_group_sync_read']:
 
-                pos = self.sync_read(self.readers['pos'])
+                pos = await self.sync_read_async(self.readers['pos'])
                 if pos==None and self.params['retry_on_comm_failure']:
-                    pos = self.sync_read(self.readers['pos'])
+                    pos = await self.sync_read_async(self.readers['pos'])
 
-                effort = self.sync_read(self.readers['effort'])
+                effort = await self.sync_read_async(self.readers['effort'])
                 if effort == None and self.params['retry_on_comm_failure']:
-                    effort = self.sync_read(self.readers['effort'])
+                    effort = await self.sync_read_async(self.readers['effort'])
 
-                vel = self.sync_read(self.readers['vel'])
+                vel = await self.sync_read_async(self.readers['vel'])
                 if vel == None and self.params['retry_on_comm_failure']:
-                    vel = self.sync_read(self.readers['vel'])
+                    vel = await self.sync_read_async(self.readers['vel'])
 
-                temp = self.sync_read(self.readers['temp'])
+                temp = await self.sync_read_async(self.readers['temp'])
                 if temp == None and self.params['retry_on_comm_failure']:
-                    temp = self.sync_read(self.readers['temp'])
+                    temp = await self.sync_read_async(self.readers['temp'])
 
-                hardware_error = self.sync_read(self.readers['hardware_error'])
+                hardware_error = await self.sync_read(self.readers['hardware_error'])
                 if hardware_error == None and self.params['retry_on_comm_failure']:
-                    hardware_error = self.sync_read(self.readers['hardware_error'])
+                    hardware_error = await self.sync_read_async(self.readers['hardware_error'])
 
                 if pos is not None and effort is not None and vel is not None and temp is not None and hardware_error is not None:
                     idx=0
@@ -115,12 +115,63 @@ class DynamixelXChain(Device):
         except IOError:
             self.logger.error('Pull Status IOError on: %s'%self.usb)
 
+    def pull_status(self):
+        if not self.hw_valid:
+            return
+        try:
+            ts = time.time()
+            if self.params['use_group_sync_read']:
+
+                pos = self.sync_read(self.readers['pos'])
+                if pos==None and self.params['retry_on_comm_failure']:
+                    pos = self.sync_read(self.readers['pos'])
+
+                # effort = self.sync_read(self.readers['effort'])
+                # if effort == None and self.params['retry_on_comm_failure']:
+                #     effort = self.sync_read(self.readers['effort'])
+                #
+                # vel = self.sync_read(self.readers['vel'])
+                # if vel == None and self.params['retry_on_comm_failure']:
+                #     vel = self.sync_read(self.readers['vel'])
+                #
+                # temp = self.sync_read(self.readers['temp'])
+                # if temp == None and self.params['retry_on_comm_failure']:
+                #     temp = self.sync_read(self.readers['temp'])
+                #
+                # hardware_error = self.sync_read(self.readers['hardware_error'])
+                # if hardware_error == None and self.params['retry_on_comm_failure']:
+                #     hardware_error = self.sync_read(self.readers['hardware_error'])
+                #
+                # if pos is not None and effort is not None and vel is not None and temp is not None and hardware_error is not None:
+                #     idx=0
+                #     for mk in self.motors.keys():
+                #         data = {'x':pos[idx], 'v': vel[idx],'eff': effort[idx], 'ts': ts, 'temp': temp[idx], 'err':hardware_error[idx]}
+                #         self.motors[mk].pull_status(data)
+                #         idx=idx+1
+                #else:
+                #    print("Communication error. Failed to pull status on %s"%self.usb)
+            else:
+                for m in self.motors:
+                    with self.pt_lock:
+                        self.motors[m].pull_status()
+            self.timer_stats.update(time.time()-ts)
+        except IOError:
+            self.logger.error('Pull Status IOError on: %s'%self.usb)
+
     def pretty_print(self):
         print('--- Dynamixel X Chain ---')
         print('USB', self.usb)
         self.timer_stats.pretty_print()
         for mk in self.motors.keys():
             self.motors[mk].pretty_print()
+
+    async def sync_read_async(self, reader):
+        if not self.hw_valid:
+            return
+        with self.pt_lock:
+            result = await reader.txRxPacket()
+        if result != COMM_SUCCESS:
+            raise IOError('Dynamixel X sync read txRxPacket failed with error code = ' + str(result))
 
     def sync_read(self, reader):
         if not self.hw_valid:
