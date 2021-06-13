@@ -6,6 +6,7 @@ import array as arr
 import fcntl
 import logging
 import aioserial
+import asyncio
 import traceback
 
 # ######################################################
@@ -39,7 +40,7 @@ An RPC transaction consists of
 * Call rpc_callback(reply)
 
 For performance reasons the max size of data send down/up from the uC is 64 bytes
-Therefore, we break RPC data into frames of size 64 bytes max.
+Therefore, we break RPC data into frames of size 32 bytes max.
 We don't know apriori the amount of data being sent.
 A frame transaction looks like:
 
@@ -73,10 +74,8 @@ class AsyncTransactionHandler():
         :return:
         """
         try:
-            #Start new RPC transmission
-            #rpc=list(rpc) #todo: cleanup types
+            #Transmit the RPC request
             await self._step_frame(id=RPC_START_NEW_RPC,ack=RPC_ACK_NEW_RPC,data=[])
-            #Send all RPC data down in one or more frames
             ntx = 0
             while ntx < rpc.nbytes:
                 nb = min(rpc.nbytes - ntx, RPC_BLOCK_SIZE)  # Num bytes to send
@@ -87,13 +86,16 @@ class AsyncTransactionHandler():
                 else:
                     await self._step_frame(id=RPC_SEND_BLOCK_MORE, ack=RPC_ACK_SEND_BLOCK_MORE,data=b)
             #Now receive RPC reply in one or more frames
-            reply = []#arr.array('B')
-            while True: #TODO: Timeout in case very corrupted comms
+            reply = []
+            ts=time.time()
+            while True:
                 buf_rx, nr =await self._step_frame(id=RPC_GET_BLOCK, ack=RPC_ACK_GET_BLOCK_LAST, data=[], ack_alt=RPC_ACK_GET_BLOCK_MORE)
                 reply = reply + buf_rx[1:nr]
+                if time.time()-ts>1.0:#Timeout in case very corrupted comms
+                    raise TransportError
                 if buf_rx[0]==RPC_ACK_GET_BLOCK_LAST:
+                    rpc.callback(arr.array('B', reply))  # Now process the reply with the callback
                     break
-            rpc.callback(arr.array('B', reply))  # Now process the reply with the callback
         except TransportError as e:
             print("TransportError: %s : %s" % (self.usb_name, str(e)))
         except serial.SerialTimeoutException as e:
@@ -107,28 +109,15 @@ class AsyncTransactionHandler():
     async def _recv_framed_data(self):
         """
         Receive a single frame back
+        Frame is Cobbs encoder with packet marker of \x00
         :return: CRC valid, num bytes received, buffer of decoded data
         """
-        timeout = .2  # Was .05 but on heavy loads can get starved
-        packet_marker = 0
-        t_start = time.time()
-        rx_buffer = []
-        while ((time.time() - t_start) < timeout):
-            #Todo: drop polling and just block so asynico event loop gets control
-            nn = self.ser.inWaiting()
-            if (nn > 0):
-                rbuf = await self.ser.read_async(nn)
-                nu = 0
-                for byte_in in rbuf:
-                    nu = nu + 1
-                    if byte_in == packet_marker:
-                        crc_ok, nr, decoded_data = self.framer.decode_data(rx_buffer)
-                        if nu < nn:
-                            self.logger.warn('Warning: Transport dropped %d bytes during _recv_framed_data' % (nn - nu))
-                        return crc_ok, nr, decoded_data
-                    else:
-                        rx_buffer.append(byte_in)
-        return 0, 0, []
+        rbuf= await self.ser.read_until_async(expected= b'\x00', size=RPC_BLOCK_SIZE*2)
+        if len(rbuf)==0 or rbuf[-1]!=0:
+            self.logger.warn('Warning: Transport invalid read %d bytes during _recv_framed_data' % len(rbuf))
+            return 0, 0, [0]
+        crc_ok, nr, decoded_data = self.framer.decode_data(rbuf[:-1])
+        return crc_ok, nr, decoded_data
 
     async def _step_frame(self,id, ack, data, ack_alt=None):
         """
@@ -165,26 +154,28 @@ class SyncTransactionHandler():
         :return:
         """
         try:
-            # Start new RPC transmission
+            # Transmit the RPC request
             self._step_frame(id=RPC_START_NEW_RPC, ack=RPC_ACK_NEW_RPC, data=[])
-            # Send all RPC data down in one or more frames
             ntx = 0
             while ntx < rpc.nbytes:
                 nb = min(rpc.nbytes - ntx, RPC_BLOCK_SIZE)  # Num bytes to send
                 b = rpc.data[ntx:ntx + nb]
-                ntx += nb
+                ntx = ntx + nb
                 if ntx == rpc.nbytes:  # Last block
                     self._step_frame(id=RPC_SEND_BLOCK_LAST, ack=RPC_ACK_SEND_BLOCK_LAST, data=b)
                 else:
                     self._step_frame(id=RPC_SEND_BLOCK_MORE, ack=RPC_ACK_SEND_BLOCK_MORE, data=b)
             # Now receive RPC reply in one or more frames
             reply = []
-            while True:  # TODO: Timeout in case very corrupted comms
-                buf_rx, nr = self._step_frame(id=RPC_GET_BLOCK, ack=RPC_ACK_GET_BLOCK_LAST, data=[],ack_alt=RPC_ACK_GET_BLOCK_MORE)
+            ts = time.time()
+            while True:
+                buf_rx, nr = self._step_frame(id=RPC_GET_BLOCK, ack=RPC_ACK_GET_BLOCK_LAST, data=[], ack_alt=RPC_ACK_GET_BLOCK_MORE)
                 reply = reply + buf_rx[1:nr]
+                if time.time() - ts > 1.0:  # Timeout in case very corrupted comms
+                    raise TransportError
                 if buf_rx[0] == RPC_ACK_GET_BLOCK_LAST:
+                    rpc.callback(arr.array('B', reply))  # Now process the reply with the callback
                     break
-            rpc.callback(arr.array('B', reply))  # Now process the reply with the callback
         except TransportError as e:
             print("TransportError: %s : %s" % (self.usb_name, str(e)))
         except serial.SerialTimeoutException as e:
@@ -198,28 +189,16 @@ class SyncTransactionHandler():
     def _recv_framed_data(self):
         """
         Receive a single frame back
+        Frame is Cobbs encoder with packet marker of \x00
         :return: CRC valid, num bytes received, buffer of decoded data
         """
-        timeout = .2  # Was .05 but on heavy loads can get starved
-        packet_marker = 0
-        t_start = time.time()
-        rx_buffer = []
-        while ((time.time() - t_start) < timeout):
-            # Todo: drop polling and just block so asynico event loop gets control
-            nn = self.ser.inWaiting()
-            if (nn > 0):
-                rbuf = self.ser.read(nn)
-                nu = 0
-                for byte_in in rbuf:
-                    nu = nu + 1
-                    if byte_in == packet_marker:
-                        crc_ok, nr, decoded_data = self.framer.decode_data(rx_buffer)
-                        if nu < nn:
-                            self.logger.warn('Warning: Transport dropped %d bytes during _recv_framed_data' % (nn - nu))
-                        return crc_ok, nr, decoded_data
-                    else:
-                        rx_buffer.append(byte_in)
-        return 0, 0, []
+        rbuf= self.ser.read_until(expected= b'\x00', size=RPC_BLOCK_SIZE*2)
+        if len(rbuf)==0 or rbuf[-1]!=0:
+            self.logger.warn('Warning: Transport invalid read %d bytes during _recv_framed_data' % len(rbuf))
+            return 0, 0, [0]
+        crc_ok, nr, decoded_data = self.framer.decode_data(rbuf[:-1])
+        return crc_ok, nr, decoded_data
+
 
     def _step_frame(self, id, ack, data, ack_alt=None):
         """
@@ -444,9 +423,10 @@ class Transport():
     The queues are of type  push (sending command data down to uC) or pull (reading data from uC).
     The use of queues allows for synchronization of RPC commands
 
-    The Transport opens a standard pySerial port as well as an asyncio serial port. This enables
-    the use of standard pySerial for non-timing critical transactions while allowing for use of asyncio
-    for timing critical transactions where blocking on the RPC call is not desirable
+    Aioserial supports the standard  pySerial interface as well as async versions of the pySerial interface. 
+    This enables Transport to support both synchronous and asynchromous calls. 
+    Devices can use standard pySerial for non-timing critical transactions.
+    They can use the asyncio interfaces for timing critical transactions where blocking on the RPC call is not desirable
 
     """
     def __init__(self,usb_name, logger=logging.getLogger()):
@@ -460,16 +440,14 @@ class Transport():
 
     def startup(self):
         try:
-            self.ser_async = aioserial.AioSerial(port=self.usb_name)
-            self.ser_sync = serial.Serial(self.usb_name, write_timeout=1.0)
+            self.ser = aioserial.AioSerial(port=self.usb_name, write_timeout=1.0, timeout=1.0)
             self.hw_valid = True
-            if self.ser_sync.isOpen() and self.ser_async.isOpen():
+            if self.ser.isOpen():
                 try:
-                    fcntl.flock(self.ser_sync.fileno(), fcntl.LOCK_EX | fcntl.LOCK_NB)
+                    fcntl.flock(self.ser.fileno(), fcntl.LOCK_EX | fcntl.LOCK_NB)
                 except IOError:
                     self.logger.error('Port %s is busy. Check if another Stretch Body process is already running' % self.usb_name)
-                    self.ser_sync.close()
-                    self.ser_async.close()
+                    self.ser.close()
                     self.hw_valid=False
         except serial.SerialException as e:
             self.logger.error("SerialException({0}): {1}".format(e.errno, e.strerror))
@@ -477,15 +455,14 @@ class Transport():
         if not self.hw_valid:
             self.logger.warn('Unable to open serial port for device %s' % self.usb_name)
         else:
-            self.async_handler=AsyncTransactionHandler(usb_name=self.usb_name, ser=self.ser_async, logger=self.logger)
-            self.sync_handler=SyncTransactionHandler(usb_name=self.usb_name, ser=self.ser_sync, logger=self.logger)
+            self.async_handler=AsyncTransactionHandler(usb_name=self.usb_name, ser=self.ser, logger=self.logger)
+            self.sync_handler=SyncTransactionHandler(usb_name=self.usb_name, ser=self.ser, logger=self.logger)
         return self.hw_valid
 
     def stop(self):
         if self.hw_valid:
             self.logger.debug('Shutting down TransportConnection on: ' + self.usb_name)
-            self.ser_sync.close()
-            self.ser_async.close()
+            self.ser.close()
             self.hw_valid = False
     # #################################
     def execute_rpc(self, rpc):
