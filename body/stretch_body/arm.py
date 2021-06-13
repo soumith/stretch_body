@@ -3,6 +3,7 @@ from stretch_body.stepper import *
 from stretch_body.device import Device
 from stretch_body.hello_utils import *
 
+
 class Arm(Device):
     """
     API to the Stretch RE1 Arm
@@ -37,8 +38,18 @@ class Arm(Device):
         self.status['vel'] = self.motor_rad_to_translate(self.status['motor']['vel'])
         self.status['force'] = self.motor_current_to_translate_force(self.status['motor']['current'])
 
+    async def pull_status_async(self):
+        await self.motor.pull_status_async()
+        self.status['timestamp_pc'] = time.time()
+        self.status['pos'] = self.motor_rad_to_translate(self.status['motor']['pos'])
+        self.status['vel'] = self.motor_rad_to_translate(self.status['motor']['vel'])
+        self.status['force'] = self.motor_current_to_translate_force(self.status['motor']['current'])
+
     def push_command(self):
         self.motor.push_command()
+
+    async def push_command_async(self):
+        await self.motor.push_command_async()
 
     def pretty_print(self):
         print('----- Arm ------ ')
@@ -47,7 +58,6 @@ class Arm(Device):
         print('Force (N): ', self.status['force'])
         print('Timestamp PC (s):', self.status['timestamp_pc'])
         self.motor.pretty_print()
-
 
     # ###################################################
     def set_soft_motion_limits(self,x_min=None,x_max=None):

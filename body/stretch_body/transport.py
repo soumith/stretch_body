@@ -33,6 +33,11 @@ RPC_DATA_SIZE = 1024
 
 dbg_on = 0
 """
+
+TODO
+* make queue and immediate rpc thread safe / atomic (sync and async)
+* Tests for thread safety
+
 Handle an asynchronous RPC transaction.
 
 An RPC transaction consists of
@@ -63,10 +68,10 @@ class AsyncTransactionHandler():
     """
     Handle an asynchronous RPC transaction.
     """
-    def __init__(self,usb_name,ser,logger):
+    def __init__(self,port_name,ser,logger):
         self.ser=ser
         self.logger=logger
-        self.usb_name=usb_name
+        self.port_name=port_name
         self.framer = CobbsFraming()
 
     async def step_transaction(self,rpc): #Handle a single RPC transaction
@@ -99,14 +104,14 @@ class AsyncTransactionHandler():
                     rpc.callback(arr.array('B', reply))  # Now process the reply with the callback
                     break
         except TransportError as e:
-            print("TransportError: %s : %s" % (self.usb_name, str(e)))
+            print("TransportError: %s : %s" % (self.port_name, str(e)))
         except serial.SerialTimeoutException as e:
-            print("SerialTimeoutException: %s : %s" % (self.usb_name, str(e)))
+            print("SerialTimeoutException: %s : %s" % (self.port_name, str(e)))
         except serial.SerialException as e:
-            print("SerialException: %s : %s" % (self.usb_name, str(e)))
+            print("SerialException: %s : %s" % (self.port_name, str(e)))
         except TypeError as e:
             print(traceback.format_exc())
-            print("TypeError: %s : %s" % (self.usb_name, str(e)))
+            print("TypeError: %s : %s" % (self.port_name, str(e)))
 
     async def _recv_framed_data(self):
         """
@@ -143,10 +148,10 @@ class SyncTransactionHandler():
     Handle a synchronous RPC transaction.
     """
 
-    def __init__(self, usb_name, ser, logger):
+    def __init__(self, port_name, ser, logger):
         self.ser = ser
         self.logger = logger
-        self.usb_name = usb_name
+        self.port_name = port_name
         self.framer = CobbsFraming()
 
     def step_transaction(self, rpc):  # Handle a single RPC transaction
@@ -179,14 +184,14 @@ class SyncTransactionHandler():
                     rpc.callback(arr.array('B', reply))  # Now process the reply with the callback
                     break
         except TransportError as e:
-            print("TransportError: %s : %s" % (self.usb_name, str(e)))
+            print("TransportError: %s : %s" % (self.port_name, str(e)))
         except serial.SerialTimeoutException as e:
-            print("SerialTimeoutException: %s : %s" % (self.usb_name, str(e)))
+            print("SerialTimeoutException: %s : %s" % (self.port_name, str(e)))
         except serial.SerialException as e:
-            print("SerialException: %s : %s" % (self.usb_name, str(e)))
+            print("SerialException: %s : %s" % (self.port_name, str(e)))
         except TypeError as e:
             print(traceback.format_exc())
-            print("TypeError: %s : %s" % (self.usb_name, str(e)))
+            print("TypeError: %s : %s" % (self.port_name, str(e)))
 
     def _recv_framed_data(self):
         """
@@ -431,38 +436,38 @@ class Transport():
     They can use the asyncio interfaces for timing critical transactions where blocking on the RPC call is not desirable
 
     """
-    def __init__(self,usb_name, logger=logging.getLogger()):
-        self.usb_name=usb_name
+    def __init__(self,port_name, logger=logging.getLogger()):
+        self.port_name=port_name
         self.logger=logger
-        self.logger.debug('Starting TransportConnection on: ' + self.usb_name)
+        self.logger.debug('Starting TransportConnection on: ' + self.port_name)
         self.status = {}
         self.hw_valid=False
         self.lock=threading.Lock()
 
     def startup(self):
         try:
-            self.ser = aioserial.AioSerial(port=self.usb_name, write_timeout=1.0, timeout=1.0)
+            self.ser = aioserial.AioSerial(port=self.port_name, write_timeout=1.0, timeout=1.0)
             self.hw_valid = True
             if self.ser.isOpen():
                 try:
                     fcntl.flock(self.ser.fileno(), fcntl.LOCK_EX | fcntl.LOCK_NB)
                 except IOError:
-                    self.logger.error('Port %s is busy. Check if another Stretch Body process is already running' % self.usb_name)
+                    self.logger.error('Port %s is busy. Check if another Stretch Body process is already running' % self.port_name)
                     self.ser.close()
                     self.hw_valid=False
         except serial.SerialException as e:
             self.logger.error("SerialException({0}): {1}".format(e.errno, e.strerror))
             self.hw_valid=False
         if not self.hw_valid:
-            self.logger.warn('Unable to open serial port for device %s' % self.usb_name)
+            self.logger.warn('Unable to open serial port for device %s' % self.port_name)
         else:
-            self.async_handler=AsyncTransactionHandler(usb_name=self.usb_name, ser=self.ser, logger=self.logger)
-            self.sync_handler=SyncTransactionHandler(usb_name=self.usb_name, ser=self.ser, logger=self.logger)
+            self.async_handler=AsyncTransactionHandler(port_name=self.port_name, ser=self.ser, logger=self.logger)
+            self.sync_handler=SyncTransactionHandler(port_name=self.port_name, ser=self.ser, logger=self.logger)
         return self.hw_valid
 
     def stop(self):
         if self.hw_valid:
-            self.logger.debug('Shutting down TransportConnection on: ' + self.usb_name)
+            self.logger.debug('Shutting down TransportConnection on: ' + self.port_name)
             self.ser.close()
             self.hw_valid = False
     # #################################

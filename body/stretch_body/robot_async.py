@@ -72,11 +72,32 @@ class RobotThread(threading.Thread):
         self.first_status = False
 
     def run(self):
-        while not self.shutdown_flag.is_set():
-            ts = time.time()
-            self.robot._pull_status_non_dynamixel()
+        loop = asyncio.new_event_loop()
+        asyncio.set_event_loop(loop)
+        ii=0
+        ts=time.time()
+        while ii<100: #not self.shutdown_flag.is_set() or ii==100:
+
+            #self.robot._pull_status_non_dynamixel(self.loop)
             self.first_status = True
 
+            if 0:
+                coro = asyncio.gather(
+                    self.robot.wacc.pull_status_async(),
+                    self.robot.base.pull_status_async(),
+                    self.robot.lift.pull_status_async(),
+                    self.robot.arm.pull_status_async(),
+                    self.robot.pimu.pull_status_async())
+                #ts = time.time()
+                result = loop.run_until_complete(coro)
+            if 1:
+                self.robot.wacc.pull_status()
+                self.robot.base.pull_status()
+                self.robot.lift.pull_status()
+                self.robot.arm.pull_status()
+                self.robot.pimu.pull_status()
+
+            #te = time.time()
             # if self.robot.params['use_monitor']:
             #     if (self.titr % self.monitor_downrate_int) == 0:
             #         self.robot.monitor.step()
@@ -89,10 +110,19 @@ class RobotThread(threading.Thread):
             #         self.robot._step_sentry()
 
             self.titr=self.titr+1
-            te = time.time()
-            tsleep = max(0.001, (1 / self.robot_update_rate_hz) - (te - ts))
-            if not self.shutdown_flag.is_set():
-                time.sleep(tsleep)
+            ii=ii+1
+            #tsleep = max(0.001, (1 / self.robot_update_rate_hz) - (te - ts))
+
+            #avg_ms = (te-ts) * 1000.0
+            #print('Average status read time of %.2f ms' % avg_ms)
+            #print('Rate of %.2f Hz' % (1000 / avg_ms))
+
+            #if not self.shutdown_flag.is_set():
+            #    time.sleep(tsleep)
+        te=time.time()
+        avg_ms = (te - ts) * 1000.0 / 100.0
+        print('Average status read time of %.2f ms' % avg_ms)
+        print('Rate of %.2f Hz' % (1000 / avg_ms))
         print('Shutting down RobotThread')
 
 
@@ -327,8 +357,8 @@ class Robot(Device):
         except SerialException:
             print('Serial Exception on Robot Step_Dynamixel')
 
-    def _pull_status_non_dynamixel(self):
-        loop = asyncio.get_event_loop()
+    def _pull_status_non_dynamixel(self,loop):
+        #loop = asyncio.get_event_loop()
         coro = asyncio.gather(
             self.wacc.pull_status_async(),
             self.base.pull_status_async(),

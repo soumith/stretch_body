@@ -73,7 +73,7 @@ class Stepper(Device):
         name = usb[5:]
         Device.__init__(self,name)
         self.usb=usb
-        self.transport = Transport(usb_name=self.usb, logger=self.logger)
+        self.transport = Transport(port_name=self.usb, logger=self.logger)
 
         self._command = {'mode':0, 'x_des':0,'v_des':0,'a_des':0,'stiffness':1.0,'i_feedforward':0.0,'i_contact_pos':0,'i_contact_neg':0,'incr_trigger':0}
         self.status = {'mode': 0, 'effort': 0, 'current':0,'pos': 0, 'vel': 0, 'err':0,'diag': 0,'timestamp': 0, 'debug':0,'guarded_event':0,

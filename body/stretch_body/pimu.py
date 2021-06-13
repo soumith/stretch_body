@@ -125,7 +125,7 @@ class Pimu(Device):
         self.frame_id_last = None
         self.frame_id_base = 0
         self.name = 'hello-pimu'
-        self.transport = Transport(usb_name='/dev/hello-pimu', logger=self.logger)
+        self.transport = Transport(port_name='/dev/hello-pimu', logger=self.logger)
         self.status = {'voltage': 0, 'current': 0, 'temp': 0,'cpu_temp': 0, 'cliff_range':[0,0,0,0], 'frame_id': 0,
                        'timestamp': 0,'at_cliff':[False,False,False,False], 'runstop_event': False, 'bump_event_cnt': 0,
                        'cliff_event': False, 'fan_on': False, 'buzzer_on': False, 'low_voltage_alert':False,'high_current_alert':False,'over_tilt_alert':False,
@@ -347,6 +347,7 @@ class Pimu(Device):
         self.status['bump_event_cnt'] = rpc.unpack_uint16_t()
         self.status['debug'] = rpc.unpack_float_t()
         self.status['cpu_temp']=self.get_cpu_temp()
+
 
 
     def pack_config(self,rpc):
