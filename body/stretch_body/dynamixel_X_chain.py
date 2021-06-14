@@ -140,14 +140,12 @@ class DynamixelXChain(Device):
                 if pos is None:
                     print("Communication error. Failed to pull POS status on %s" % self.usb)
 
-                if self.status_mux_id == 3:
+
+                vel = self.sync_read(self.readers['vel'])
+                if vel == None and self.params['retry_on_comm_failure']:
                     vel = self.sync_read(self.readers['vel'])
-                    if vel == None and self.params['retry_on_comm_failure']:
-                        vel = self.sync_read(self.readers['vel'])
-                    if vel is None:
-                        print("Communication error. Failed to pull VEL status on %s" % self.usb)
-                else:
-                    vel=None
+                if vel is None:
+                    print("Communication error. Failed to pull VEL status on %s" % self.usb)
 
                 if self.status_mux_id == 0:
                     effort = self.sync_read(self.readers['effort'])
@@ -176,7 +174,7 @@ class DynamixelXChain(Device):
                 else:
                     hardware_error = None
 
-                self.status_mux_id = (self.status_mux_id + 1) % 4
+                self.status_mux_id = (self.status_mux_id + 1) % 3
 
                 idx=0
                 #Build dictionary of status data and push to each motor status
