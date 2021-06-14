@@ -464,6 +464,53 @@ class DynamixelXL430():
             dxl_comm_result, dxl_error =   self.packet_handler.write1ByteTxRx(self.port_handler, self.dxl_id, XL430_ADDR_DRIVE_MODE, x)
         self.handle_comm_result('XL430_ADDR_DRIVE_MODE', dxl_comm_result, dxl_error)
 
+    def enable_watchdog(self, timeout_20msec=15):
+        """Enables bus monitoring to stop safely if communications fails.
+
+        In any operating mode, a watchdog may be enabled on the Dynamixel
+        hardware. If bus communication ceases for longer than a specified
+        timeout, the hardware enters watchdog error mode. New commands will
+        not execute until watchdog is disabled. Watchdog can be used with
+        velocity control to prevent undesired behavior in case of software
+        failure.
+
+        Parameters
+        ----------
+        timeout_20msec : int
+            value in range [1, 127] calculates timeout as value * 20 milliseconds
+        """
+        with self.pt_lock:
+            dxl_comm_result, dxl_error =   self.packet_handler.write1ByteTxRx(self.port_handler, self.dxl_id, XL430_ADDR_BUS_WATCHDOG, timeout_20msec)
+        self.handle_comm_result('XL430_ADDR_BUS_WATCHDOG', dxl_comm_result, dxl_error)
+
+    def disable_watchdog(self):
+        """Disables watchdog bus monitoring.
+
+        In case of watchdog error occurred, no new goal commands will execute
+        until watchdog disabled with this function.
+        """
+        with self.pt_lock:
+            dxl_comm_result, dxl_error =   self.packet_handler.write1ByteTxRx(self.port_handler, self.dxl_id, XL430_ADDR_BUS_WATCHDOG, 0)
+        self.handle_comm_result('XL430_ADDR_BUS_WATCHDOG', dxl_comm_result, dxl_error)
+
+    def get_watchdog_error(self):
+        """Checks if watchdog error occurred.
+
+        Returns
+        -------
+        bool
+            True if watchdog detected no communication for longer than watchdog timeout
+        """
+        with self.pt_lock:
+            p, dxl_comm_result, dxl_error =   self.packet_handler.read1ByteTxRx(self.port_handler, self.dxl_id, XL430_ADDR_BUS_WATCHDOG)
+        self.handle_comm_result('XL430_ADDR_BUS_WATCHDOG', dxl_comm_result, dxl_error)
+        return p == 255
+
+    def go_to_vel(self,v):
+        with self.pt_lock:
+            dxl_comm_result, dxl_error =   self.packet_handler.write4ByteTxRx(self.port_handler, self.dxl_id, XL430_ADDR_GOAL_VEL, v)
+        self.handle_comm_result('XL430_ADDR_GOAL_VEL', dxl_comm_result, dxl_error)
+
     #XM Series
     def set_goal_current(self,i):
         with self.pt_lock:
@@ -548,6 +595,8 @@ class DynamixelXL430():
         with self.pt_lock:
             v, dxl_comm_result, dxl_error = self.packet_handler.read4ByteTxRx(self.port_handler, self.dxl_id, XL430_ADDR_PRESENT_VELOCITY)
         self.handle_comm_result('XL430_ADDR_PRESENT_VELOCITY', dxl_comm_result, dxl_error)
+        # if v > 2 ** 24:
+        #     v = v - 2 ** 32
         return v
 
     def get_P_gain(self):

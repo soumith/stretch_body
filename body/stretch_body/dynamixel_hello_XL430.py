@@ -29,6 +29,7 @@ class DynamixelHelloXL430(Device):
         self.is_calibrated=False
         self.set_soft_motion_limits(None, None)
         self.is_homing=False
+        self.status_mux_id = 0
 
     # ###########  Device Methods #############
     def set_soft_motion_limits(self,x_min=None,x_max=None):
@@ -108,26 +109,39 @@ class DynamixelHelloXL430(Device):
                     x = self.motor.get_pos()
                 pos_valid = self.motor.last_comm_success
 
-                # v = self.motor.get_vel()
-                # if not self.motor.last_comm_success and self.params['retry_on_comm_failure']:
-                #     v = self.motor.get_vel()
-                # vel_valid = self.motor.last_comm_success
-                #
-                # eff = self.motor.get_load()
-                # if not self.motor.last_comm_success and self.params['retry_on_comm_failure']:
-                #     eff = self.motor.get_load()
-                # eff_valid = self.motor.last_comm_success
-                #
-                # temp = self.motor.get_temp()
-                # if not self.motor.last_comm_success and self.params['retry_on_comm_failure']:
-                #     temp = self.motor.get_temp()
-                # temp_valid = self.motor.last_comm_success
-                #
-                # err=self.motor.get_hardware_error()
-                # if not self.motor.last_comm_success and self.params['retry_on_comm_failure']:
-                #     err=self.motor.get_hardware_error()
-                # err_valid = self.motor.last_comm_success
+                if self.status_mux_id == 3:
+                    v = self.motor.get_vel()
+                    if not self.motor.last_comm_success and self.params['retry_on_comm_failure']:
+                        v = self.motor.get_vel()
+                    vel_valid = self.motor.last_comm_success
+                else:
+                    v = self.status['vel_ticks']
 
+                if self.status_mux_id==0:
+                    eff = self.motor.get_load()
+                    if not self.motor.last_comm_success and self.params['retry_on_comm_failure']:
+                        eff = self.motor.get_load()
+                    eff_valid = self.motor.last_comm_success
+                else:
+                    eff=self.status['effort_ticks']
+
+                if self.status_mux_id == 1:
+                    temp = self.motor.get_temp()
+                    if not self.motor.last_comm_success and self.params['retry_on_comm_failure']:
+                        temp = self.motor.get_temp()
+                    temp_valid = self.motor.last_comm_success
+                else:
+                    temp=self.status['temp']
+
+                if self.status_mux_id == 2:
+                    err=self.motor.get_hardware_error()
+                    if not self.motor.last_comm_success and self.params['retry_on_comm_failure']:
+                        err=self.motor.get_hardware_error()
+                    err_valid = self.motor.last_comm_success
+                else:
+                    err=self.status['hardware_error']
+
+                self.status_mux_id=(self.status_mux_id+1)%4
 
                 if not pos_valid or not vel_valid or not eff_valid or not temp_valid or not err_valid:
                     self.logger.debug('Failed status communication on %s: POS %d VEL %d EFF %d TEMP %d ERR %d '%(self.name,pos_valid,vel_valid,eff_valid,temp_valid,err_valid))
@@ -148,20 +162,20 @@ class DynamixelHelloXL430(Device):
         if pos_valid:
             self.status['pos_ticks'] = x
             self.status['pos'] = self.ticks_to_world_rad(float(x))
-        # if vel_valid:
-        #     self.status['vel_ticks'] = v
-        #     self.status['vel'] = self.ticks_to_rad_per_sec(float(v))
-        # if eff_valid:
-        #     self.status['effort_ticks'] = eff
-        #     self.status['effort'] = self.ticks_to_pct_load(float(eff))
-        # if temp_valid:
-        #     self.status['temp'] = float(temp)
-        # if err_valid:
-        #     self.status['hardware_error'] = err
-        #
-        # self.status['timestamp_pc'] = ts
-        #
-        # self.status['hardware_error'] = err
+        if vel_valid:
+            self.status['vel_ticks'] = v
+            self.status['vel'] = self.ticks_to_rad_per_sec(float(v))
+        if eff_valid:
+            self.status['effort_ticks'] = eff
+            self.status['effort'] = self.ticks_to_pct_load(float(eff))
+        if temp_valid:
+            self.status['temp'] = float(temp)
+        if err_valid:
+            self.status['hardware_error'] = err
+
+        self.status['timestamp_pc'] = ts
+
+        self.status['hardware_error'] = err
         self.status['input_voltage_error'] = self.status['hardware_error'] & 1 != 0
         self.status['overheating_error'] = self.status['hardware_error'] & 4 != 0
         self.status['motor_encoder_error'] = self.status['hardware_error'] & 8 != 0
@@ -471,6 +485,11 @@ class DynamixelHelloXL430(Device):
         rad_servo = r*self.params['gr']*self.polarity
         t= self.rad_to_ticks(rad_servo)
         return t+self.params['zero_t']
+
+    def world_rad_to_ticks_per_sec(self,r):
+        rad_per_sec_servo = r*self.params['gr']*self.polarity
+        t= self.rad_per_sec_to_ticks(rad_per_sec_servo)
+        return t
 
     def ticks_to_rad(self,t):
         return deg_to_rad((360.0 * t / 4096.0))
