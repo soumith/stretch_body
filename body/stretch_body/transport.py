@@ -78,8 +78,9 @@ class AsyncTransactionHandler():
         """
         :param rpc: buffer of rpc data to send
         :param rpc_callback: function to call upon completion of transaction
-        :return:
+        :return: True if transaction successfully completed
         """
+        success=False
         try:
             #Transmit the RPC request
             await self._step_frame(id=RPC_START_NEW_RPC,ack=RPC_ACK_NEW_RPC,data=[])
@@ -100,8 +101,8 @@ class AsyncTransactionHandler():
                 reply = reply + buf_rx[1:nr]
                 if time.time()-ts>1.0:#Timeout in case very corrupted comms
                     raise TransportError
-                if buf_rx[0]==RPC_ACK_GET_BLOCK_LAST:
-                    rpc.callback(arr.array('B', reply))  # Now process the reply with the callback
+                if buf_rx[0]==RPC_ACK_GET_BLOCK_LAST and len(reply):
+                    success=rpc.callback(arr.array('B', reply))  # Now process the reply with the callback
                     break
         except TransportError as e:
             print("TransportError: %s : %s" % (self.port_name, str(e)))
@@ -112,6 +113,7 @@ class AsyncTransactionHandler():
         except TypeError as e:
             print(traceback.format_exc())
             print("TypeError: %s : %s" % (self.port_name, str(e)))
+        return success
 
     async def _recv_framed_data(self):
         """
@@ -120,9 +122,9 @@ class AsyncTransactionHandler():
         :return: CRC valid, num bytes received, buffer of decoded data
         """
         rbuf= await self.ser.read_until_async(expected= b'\x00', size=RPC_BLOCK_SIZE*2)
-        if len(rbuf)==0 or rbuf[-1]!=0:
+        if len(rbuf)==0 or rbuf[-1]!=0: #Check that ends with packet marker
             self.logger.warn('Warning: Transport invalid read %d bytes during _recv_framed_data' % len(rbuf))
-            return 0, 0, [0]
+            raise TransportError
         crc_ok, nr, decoded_data = self.framer.decode_data(rbuf[:-1])
         return crc_ok, nr, decoded_data
 
@@ -158,8 +160,9 @@ class SyncTransactionHandler():
         """
         :param rpc: buffer of rpc data to send
         :param rpc_callback: function to call upon completion of transaction
-        :return:
+        :return: True if transaction successfully completed
         """
+        success=False
         try:
             # Transmit the RPC request
             self._step_frame(id=RPC_START_NEW_RPC, ack=RPC_ACK_NEW_RPC, data=[])
@@ -180,8 +183,8 @@ class SyncTransactionHandler():
                 reply = reply + buf_rx[1:nr]
                 if time.time() - ts > 1.0:  # Timeout in case very corrupted comms
                     raise TransportError
-                if buf_rx[0] == RPC_ACK_GET_BLOCK_LAST:
-                    rpc.callback(arr.array('B', reply))  # Now process the reply with the callback
+                if buf_rx[0] == RPC_ACK_GET_BLOCK_LAST and len(reply):
+                    success =rpc.callback(arr.array('B', reply))  # Now process the reply with the callback
                     break
         except TransportError as e:
             print("TransportError: %s : %s" % (self.port_name, str(e)))
@@ -192,6 +195,7 @@ class SyncTransactionHandler():
         except TypeError as e:
             print(traceback.format_exc())
             print("TypeError: %s : %s" % (self.port_name, str(e)))
+        return success
 
     def _recv_framed_data(self):
         """
@@ -202,7 +206,7 @@ class SyncTransactionHandler():
         rbuf= self.ser.read_until(expected= b'\x00', size=RPC_BLOCK_SIZE*2)
         if len(rbuf)==0 or rbuf[-1]!=0:
             self.logger.warn('Warning: Transport invalid read %d bytes during _recv_framed_data' % len(rbuf))
-            return 0, 0, [0]
+            raise TransportError
         crc_ok, nr, decoded_data = self.framer.decode_data(rbuf[:-1])
         return crc_ok, nr, decoded_data
 
@@ -379,8 +383,11 @@ class RPCRequest():
         self.id=id
         self.callback=callback
         self.data = arr.array('B', [0] * (RPC_DATA_SIZE + 1))
-        self.data[0]=id
-        self.nbytes=1 #Num bytes packed so far
+        self.nbytes = 1  # Num bytes packed so far
+        try:
+            self.data[0]=id
+        except OverflowError:
+            print('Invalid RPC ID of %d'%id)
 
     def pack_n_bytes(self,x,n):
         self.data[self.nbytes:self.nbytes+n]=x
@@ -440,7 +447,7 @@ class Transport():
         self.port_name=port_name
         self.logger=logger
         self.logger.debug('Starting TransportConnection on: ' + self.port_name)
-        self.status = {}
+        self.status = {'rpc_errors':0}
         self.hw_valid=False
         self.lock=threading.Lock()
 
@@ -474,28 +481,37 @@ class Transport():
     def execute_rpc(self, rpc):
         """
         :param rpc: RPC instance or a list of instances
-        :return:
+        :return True if all succesfully executed:
         """
+        success=True
         if self.hw_valid:
             with self.lock:
                 if type(rpc)==list:
                     for r in rpc:
-                        self.sync_handler.step_transaction(r)
+                        success=success and self.sync_handler.step_transaction(r)
                 else:
-                    self.sync_handler.step_transaction(rpc)
+                    success=self.sync_handler.step_transaction(rpc)
+        if not success:
+            self.status['rpc_errors']+=1
+        return success
 
-    async def execute_rpcs_async(self, rpc):
+
+    async def execute_rpc_async(self, rpc):
         """
         :param rpc: RPC instance or a list of instances
-        :return:
+        :return True if all succesfully executed:
         """
+        success = True
         if self.hw_valid:
             # Acquire the lock in a worker thread, suspending us while waiting.
             # See https://stackoverflow.com/questions/63420413/how-to-use-threading-lock-in-async-function-while-object-can-be-accessed-from-mu
             await asyncio.get_event_loop().run_in_executor(None, self.lock.acquire)
             if type(rpc)==list:
                 for r in rpc:
-                    await self.async_handler.step_transaction(r)
+                    success= success and await self.async_handler.step_transaction(r)
             else:
-                await self.async_handler.step_transaction(rpc)
+                success= await self.async_handler.step_transaction(rpc)
             self.lock.release()
+        if not success:
+            self.status['rpc_errors']+=1
+        return success

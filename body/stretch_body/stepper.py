@@ -511,46 +511,66 @@ class Stepper(Device):
             self.load_test_payload = d
             if pass_test:
                 print('Load Test data valid')
+                return True
+            else:
+                return False
         else:
             print('Error RPC_REPLY_LOAD_TEST', reply[0])
+            return False
 
     def rpc_board_info_reply(self, reply):
         if reply[0] == RPC_REPLY_STEPPER_BOARD_INFO:
             self.unpack_board_info(reply[1:])
+            return True
         else:
             print('Error RPC_REPLY_STEPPER_BOARD_INFO', reply[0])
+            return False
 
     def rpc_gains_reply(self, reply):
         if reply[0] != RPC_REPLY_GAINS:
             print('Error RPC_REPLY_GAINS', reply[0])
+            return False
+        return True
 
     def rpc_trigger_reply(self, reply):
         if reply[0] != RPC_REPLY_SET_TRIGGER:
             print('Error RPC_REPLY_SET_TRIGGER', reply[0])
+            return False
+        return True
 
     def rpc_command_reply(self, reply):
         if reply[0] != RPC_REPLY_COMMAND:
             print('Error RPC_REPLY_COMMAND', reply[0])
+            return False
+        return True
 
     def rpc_motion_limits_reply(self, reply):
         if reply[0] != RPC_REPLY_MOTION_LIMITS:
             print('Error RPC_REPLY_MOTION_LIMITS', reply[0])
+            return False
+        return True
 
     def rpc_menu_on_reply(self, reply):
         if reply[0] != RPC_REPLY_MENU_ON:
             print('Error RPC_REPLY_MENU_ON', reply[0])
+            return False
+        return True
 
     def rpc_status_reply(self, reply):
         if reply[0] == RPC_REPLY_STATUS:
-            nr = self.unpack_status(reply[1:])
+            self.unpack_status(reply[1:])
+            return True
         else:
             print('Error RPC_REPLY_STATUS', reply[0])
+            return False
 
     def rpc_read_gains_from_flash_reply(self, reply):
         if reply[0] == RPC_REPLY_READ_GAINS_FROM_FLASH:
-            nr = self.unpack_gains(reply[1:])
+            self.unpack_gains(reply[1:])
+            return True
         else:
             print('Error RPC_REPLY_READ_GAINS_FROM_FLASH', reply[0])
+            return False
 
     def unpack_board_info(self,reply):
         rpc=RPCReply(reply)

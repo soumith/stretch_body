@@ -1,2 +1,7 @@
 To run a test:
-python -m unittest test_x
+python2 -m unittest test_x
+
+or
+
+python3 -m unittest test_x
+

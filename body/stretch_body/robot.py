@@ -104,11 +104,11 @@ class RobotSafetyThread(threading.Thread):
                     self.robot.collision.step()
             if self.robot.params['use_sentry']:
                 if (self.titr % self.sentry_downrate_int) == 0:
-                    self.robot.head.step_sentry(self)
-                    self.robot.base.step_sentry(self)
-                    self.robot.arm.step_sentry(self)
-                    self.robot.lift.step_sentry(self)
-                    self.robot.end_of_arm.step_sentry(self)
+                    self.robot.head.step_sentry(self.robot)
+                    self.robot.base.step_sentry(self.robot)
+                    self.robot.arm.step_sentry(self.robot)
+                    self.robot.lift.step_sentry(self.robot)
+                    self.robot.end_of_arm.step_sentry(self.robot)
             self.timer_stats.update_rate()
             if not self.shutdown_flag.is_set():
                 time.sleep(max(0.001, (1 / self.update_rate_hz) - (time.time() - ts)))
@@ -202,15 +202,15 @@ class Robot(Device):
         Cleanly stops down motion and communication
         """
         print('---- Shutting down robot ----')
-        if self.rdt is not None:
-            self.rdt.shutdown_flag.set()
-            self.rdt.join(1)
-        if self.dxt is not None:
-            self.dxt.shutdown_flag.set()
-            self.dxt.join(1)
         if self.ndt is not None:
             self.ndt.shutdown_flag.set()
             self.ndt.join(1)
+        if self.dxt is not None:
+            self.dxt.shutdown_flag.set()
+            self.dxt.join(1)
+        if self.rst is not None:
+            self.rst.shutdown_flag.set()
+            self.rst.join(1)
         for k in self.devices.keys():
             if self.devices[k] is not None:
                 print('Shutting down',k)

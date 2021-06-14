@@ -383,28 +383,38 @@ class Pimu(Device):
     def rpc_motor_sync_reply(self,reply):
         if reply[0] != RPC_REPLY_MOTOR_SYNC:
             print('Error RPC_REPLY_MOTOR_SYNC', reply[0])
+            return True
+        return False
 
     def rpc_config_reply(self,reply):
         if reply[0] != RPC_REPLY_PIMU_CONFIG:
             print('Error RPC_REPLY_PIMU_CONFIG', reply[0])
+            return False
+        return True
 
     def rpc_board_info_reply(self,reply):
         if reply[0] == RPC_REPLY_PIMU_BOARD_INFO:
             self.unpack_board_info(reply[1:])
+            return True
         else:
             print('Error RPC_REPLY_PIMU_BOARD_INFO', reply[0])
+            return False
 
     def rpc_trigger_reply(self,reply):
         if reply[0] != RPC_REPLY_PIMU_TRIGGER:
             print('Error RPC_REPLY_PIMU_TRIGGER', reply[0])
+            return False
         else:
             self.unpack_trigger_reply(reply[1:])
+            return True
 
     def rpc_status_reply(self,reply):
         if reply[0] == RPC_REPLY_PIMU_STATUS:
             self.unpack_status(reply[1:])
+            return True
         else:
             print('Error RPC_REPLY_PIMU_STATUS', reply[0])
+            return False
 
     # ################ Sentry #####################
     def get_cpu_temp(self):

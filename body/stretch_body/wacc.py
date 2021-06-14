@@ -102,7 +102,7 @@ class Wacc(Device):
 
     async def push_command_async(self):
         if self.hw_valid:
-            await self.transport.execute_rpc(self._get_queued_commands())
+            await self.transport.execute_rpc_async(self._get_queued_commands())
 
     def pull_status(self):
         if self.hw_valid:
@@ -198,22 +198,30 @@ class Wacc(Device):
     def rpc_board_info_reply(self,reply):
         if reply[0] == RPC_REPLY_WACC_BOARD_INFO:
             self.unpack_board_info(reply[1:])
+            return True
         else:
             print('Error RPC_REPLY_WACC_BOARD_INFO', reply[0])
+            return False
 
     def rpc_command_reply(self,reply):
         if reply[0] != RPC_REPLY_WACC_COMMAND:
             print('Error RPC_REPLY_WACC_COMMAND', reply[0])
+            return False
+        return True
 
     def rpc_config_reply(self,reply):
         if reply[0] != RPC_REPLY_WACC_CONFIG:
             print('Error RPC_REPLY_WACC_CONFIG', reply[0])
+            return False
+        return True
 
     def rpc_status_reply(self,reply):
         if reply[0] == RPC_REPLY_WACC_STATUS:
             self.unpack_status(reply[1:])
+            return True
         else:
             print('Error RPC_REPLY_WACC_STATUS', reply[0])
+            return False
 
 
 

@@ -4,8 +4,8 @@ import array as arr
 import logging
 
 from dynamixel_sdk.robotis_def import *
-import dynamixel_sdk.dynamixel_port_handler as prh
-import dynamixel_sdk.dynamixel_packet_handler as pch
+import dynamixel_sdk.port_handler as prh
+import dynamixel_sdk.packet_handler as pch
 import threading
 import serial
 

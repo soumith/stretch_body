@@ -121,6 +121,9 @@ class TimerStats():
         self.ts_last=time.time()
         self.rate_hz=0
 
+    def get_rate_hz(self):
+        return self.rate_hz
+
     def update_rate(self):
         te=time.time()
         self.rate_hz=1/(te-self.ts_last)

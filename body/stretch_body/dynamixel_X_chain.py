@@ -9,7 +9,7 @@ from stretch_body.dynamixel_XL430 import *
 import dynamixel_sdk.port_handler as prh
 import dynamixel_sdk.packet_handler as pch
 import dynamixel_sdk.group_sync_read as gsr
-
+from stretch_body.device import *
 
 class DynamixelXChain(Device):
     """
