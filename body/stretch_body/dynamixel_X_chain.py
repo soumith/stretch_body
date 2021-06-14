@@ -81,48 +81,75 @@ class DynamixelXChain(Device):
             if self.params['use_group_sync_read']:
 
                 pos = await self.sync_read_async(self.readers['pos'])
-                if pos==None and self.params['retry_on_comm_failure']:
+                if pos == None and self.params['retry_on_comm_failure']:
                     pos = await self.sync_read_async(self.readers['pos'])
+                if pos is None:
+                    print("Communication error. Failed to pull POS status on %s" % self.usb)
 
                 vel = await self.sync_read_async(self.readers['vel'])
                 if vel == None and self.params['retry_on_comm_failure']:
                     vel = await self.sync_read_async(self.readers['vel'])
+                if vel is None:
+                    print("Communication error. Failed to pull VEL status on %s" % self.usb)
 
-                if self.status_mux_id==0:
+                if self.status_mux_id == 0:
                     effort = await self.sync_read_async(self.readers['effort'])
                     if effort == None and self.params['retry_on_comm_failure']:
                         effort = await self.sync_read_async(self.readers['effort'])
+                    if effort is None:
+                        print("Communication error. Failed to pull EFFORT status on %s" % self.usb)
                 else:
-                    effort=None
+                    effort = None
 
                 if self.status_mux_id == 1:
                     temp = await self.sync_read_async(self.readers['temp'])
                     if temp == None and self.params['retry_on_comm_failure']:
                         temp = await self.sync_read_async(self.readers['temp'])
+                    if temp is None:
+                        print("Communication error. Failed to pull TEMP status on %s" % self.usb)
                 else:
-                    temp=None
+                    temp = None
 
                 if self.status_mux_id == 2:
-                    hardware_error = await self.sync_read(self.readers['hardware_error'])
+                    hardware_error = await self.sync_read_async(self.readers['hardware_error'])
                     if hardware_error == None and self.params['retry_on_comm_failure']:
                         hardware_error = await self.sync_read_async(self.readers['hardware_error'])
+                    if hardware_error is None:
+                        print("Communication error. Failed to pull ERR status on %s" % self.usb)
                 else:
-                    hardware_error=None
+                    hardware_error = None
 
-                self.status_mux_id=(self.status_mux_id+1)%3
+                self.status_mux_id = (self.status_mux_id + 1) % 3
 
-                if pos is not None and effort is not None and vel is not None and temp is not None and hardware_error is not None:
-                    idx=0
-                    for mk in self.motors.keys():
-                        data = {'x':pos[idx], 'v': vel[idx],'eff': effort[idx], 'ts': ts, 'temp': temp[idx], 'err':hardware_error[idx]}
-                        self.motors[mk].pull_status(data)
-                        idx=idx+1
-                #else:
-                #    print("Communication error. Failed to pull status on %s"%self.usb)
-            else:
-                for m in self.motors:
-                    with self.pt_lock:
-                        self.motors[m].pull_status()
+                idx=0
+                #Build dictionary of status data and push to each motor status
+                #None may indicate comm error or the field wasn't read on this mux cycle
+                for mk in self.motors.keys():
+                    data={'ts':time.time()}
+                    if pos is not None:
+                        data['x']=pos[idx]
+                    else:
+                        data['x']=self.motors[mk].status['pos_ticks']
+                    if vel is not None:
+                        data['v']=vel[idx]
+                    else:
+                        data['v']=self.motors[mk].status['vel_ticks']
+                    if effort is not None:
+                        data['eff']=effort[idx]
+                    else:
+                        data['eff']=self.motors[mk].status['effort_ticks']
+                    if temp is not None:
+                        data['temp']=temp[idx]
+                    else:
+                        data['temp']=self.motors[mk].status['temp']
+                    if hardware_error is not None:
+                        data['err']=hardware_error[idx]
+                    else:
+                        data['err']=self.motors[mk].status['hardware_error']
+                    self.motors[mk].pull_status(data)
+                    idx=idx+1
+            else: #Not GroupSyncRead
+                self.logger.error('Async not supported for GroupSyncRead=0')
             self.timer_stats.update(time.time()-ts)
         except IOError:
             self.logger.error('Pull Status IOError on: %s'%self.usb)

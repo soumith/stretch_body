@@ -109,13 +109,10 @@ class DynamixelHelloXL430(Device):
                     x = self.motor.get_pos()
                 pos_valid = self.motor.last_comm_success
 
-                if self.status_mux_id == 3:
+                v = self.motor.get_vel()
+                if not self.motor.last_comm_success and self.params['retry_on_comm_failure']:
                     v = self.motor.get_vel()
-                    if not self.motor.last_comm_success and self.params['retry_on_comm_failure']:
-                        v = self.motor.get_vel()
-                    vel_valid = self.motor.last_comm_success
-                else:
-                    v = self.status['vel_ticks']
+                vel_valid = self.motor.last_comm_success
 
                 if self.status_mux_id==0:
                     eff = self.motor.get_load()
@@ -141,7 +138,7 @@ class DynamixelHelloXL430(Device):
                 else:
                     err=self.status['hardware_error']
 
-                self.status_mux_id=(self.status_mux_id+1)%4
+                self.status_mux_id=(self.status_mux_id+1)%3
 
                 if not pos_valid or not vel_valid or not eff_valid or not temp_valid or not err_valid:
                     self.logger.debug('Failed status communication on %s: POS %d VEL %d EFF %d TEMP %d ERR %d '%(self.name,pos_valid,vel_valid,eff_valid,temp_valid,err_valid))

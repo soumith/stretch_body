@@ -31,7 +31,7 @@ LATENCY_TIMER = 16
 DEFAULT_BAUDRATE = 1000000
 
 
-class PortHandler(object):
+class PortHandlerAsync(object):
     def __init__(self, port_name):
         self.is_open = False
         self.baudrate = DEFAULT_BAUDRATE
