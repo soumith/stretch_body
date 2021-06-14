@@ -487,15 +487,17 @@ class Stepper(Device):
         self.menu_transaction('m')
 
     def menu_transaction(self,x,do_print=True):
+        do_print=True
         reply = []
         if self.hw_valid:
-            self.transport.sync.write(x)
+            self.transport.ser.write(str.encode(x))
             time.sleep(0.1)
-            while self.transport.sync.inWaiting():
-                r=self.transport.sync.readline()
+            while self.transport.ser.inWaiting():
+                r=self.transport.ser.readline()
                 if do_print:
                     print(r, end=' ')
                 reply.append(r)
+        print('Menu transaction',x)
         return reply
 
     # ################ RPC Callbacks #####################
