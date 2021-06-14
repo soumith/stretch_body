@@ -118,7 +118,14 @@ class TimerStats():
         self.av = None
         self.mx = None
         self.count = 0
+        self.ts_last=time.time()
+        self.rate_hz=0
 
+    def update_rate(self):
+        te=time.time()
+        self.rate_hz=1/(te-self.ts_last)
+        self.ts_last=te
+        return self.rate_hz
 
     def update(self, duration):
         if self.av is None:

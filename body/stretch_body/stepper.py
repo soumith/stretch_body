@@ -139,15 +139,11 @@ class Stepper(Device):
 
     def push_command(self):
         if self.hw_valid:
-            rpcs=self._queue_command()
-            for r in rpcs:
-                self.transport.execute_rpc(r)
+            self.transport.execute_rpc(self._get_queued_commands())
 
     async def push_command_async(self):
         if self.hw_valid:
-            rpcs=self._queue_command()
-            for r in rpcs:
-                await self.transport.execute_rpc_async(r)
+            await self.transport.execute_rpc_async(self._get_queued_commands())
 
     def pull_status(self):
         if self.hw_valid:
@@ -161,7 +157,7 @@ class Stepper(Device):
 
     # ###############################################
 
-    def _queue_command(self):
+    def _get_queued_commands(self):
         rpcs=[]
         if self._dirty_load_test:
             rpcs.append(RPCRequest(id=RPC_LOAD_TEST, callback=self.rpc_load_test_reply))

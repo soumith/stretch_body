@@ -472,14 +472,30 @@ class Transport():
             self.hw_valid = False
     # #################################
     def execute_rpc(self, rpc):
+        """
+        :param rpc: RPC instance or a list of instances
+        :return:
+        """
         if self.hw_valid:
             with self.lock:
-                self.sync_handler.step_transaction(rpc)
+                if type(rpc)==list:
+                    for r in rpc:
+                        self.sync_handler.step_transaction(r)
+                else:
+                    self.sync_handler.step_transaction(rpc)
 
-    async def execute_rpc_async(self, rpc):
+    async def execute_rpcs_async(self, rpc):
+        """
+        :param rpc: RPC instance or a list of instances
+        :return:
+        """
         if self.hw_valid:
             # Acquire the lock in a worker thread, suspending us while waiting.
             # See https://stackoverflow.com/questions/63420413/how-to-use-threading-lock-in-async-function-while-object-can-be-accessed-from-mu
             await asyncio.get_event_loop().run_in_executor(None, self.lock.acquire)
-            await self.async_handler.step_transaction(rpc)
+            if type(rpc)==list:
+                for r in rpc:
+                    await self.async_handler.step_transaction(r)
+            else:
+                await self.async_handler.step_transaction(rpc)
             self.lock.release()

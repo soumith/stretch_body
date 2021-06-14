@@ -98,15 +98,11 @@ class Wacc(Device):
 
     def push_command(self):
         if self.hw_valid:
-            rpcs=self._queue_command()
-            for r in rpcs:
-                self.transport.execute_rpc(r)
+            self.transport.execute_rpc(self._get_queued_commands())
 
     async def push_command_async(self):
         if self.hw_valid:
-            rpcs = self._queue_command()
-            for r in rpcs:
-                await self.transport.execute_rpc(r)
+            await self.transport.execute_rpc(self._get_queued_commands())
 
     def pull_status(self):
         if self.hw_valid:
@@ -118,7 +114,7 @@ class Wacc(Device):
             rpc = RPCRequest(id=RPC_GET_WACC_STATUS, callback=self.rpc_status_reply)
             await self.transport.execute_rpc_async(rpc)
 
-    def _queue_command(self):
+    def _get_queued_commands(self):
         rpcs=[]
         if self._dirty_config:
             rpcs.append(RPCRequest(id=RPC_SET_WACC_CONFIG, callback=self.rpc_config_reply))

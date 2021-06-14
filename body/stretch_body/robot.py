@@ -4,6 +4,7 @@ import time
 import signal
 import os
 import importlib
+import asyncio
 
 from stretch_body.device import Device
 import stretch_body.base as base
@@ -22,77 +23,96 @@ from stretch_body.robot_collision import RobotCollision
 
 
 # #############################################################
-class RobotDynamixelThread(threading.Thread):
+class DXLStatusThread(threading.Thread):
     """
-    This thread polls the status data of the Dynamixel devices
-    at 15Hz
+    Do  pull_status data from the dxl devices
     """
     def __init__(self,robot):
         threading.Thread.__init__(self)
         self.robot=robot
-        self.robot_update_rate_hz = 15.0  #Hz
+        self.update_rate_hz = 15.0  #Hz
         self.timer_stats = hello_utils.TimerStats()
         self.shutdown_flag = threading.Event()
-        self.first_status=False
-
+        self.running=False
     def run(self):
         while not self.shutdown_flag.is_set():
+            self.running = True
             ts = time.time()
-            self.robot._pull_status_dynamixel()
-            self.first_status=True
-            te = time.time()
-            tsleep = max(0.001, (1 / self.robot_update_rate_hz) - (te - ts))
+            self.robot.end_of_arm.pull_status()
+            self.robot.head.pull_status()
+            self.timer_stats.update_rate()
             if not self.shutdown_flag.is_set():
-                time.sleep(tsleep)
-        print('Shutting down RobotDynamixelThread')
+                time.sleep(max(0.001, (1 / self.update_rate_hz) - (time.time() - ts)))
+        print('Shutting down DXLStatusThread')
 
-
-class RobotThread(threading.Thread):
+class NonDXLStatusThread(threading.Thread):
     """
-    This thread runs at 25Hz.
-    It updates the status data of the Devices.
-    It also steps the Sentry and Monitor functions
+    Do Asyncio pull_status data from the non-dxl devices
     """
     def __init__(self,robot):
         threading.Thread.__init__(self)
         self.robot=robot
+        self.update_rate_hz = 25.0  #Hz
+        self.shutdown_flag = threading.Event()
+        self.timer_stats = hello_utils.TimerStats()
+        self.running = False
+    def run(self):
+        loop = asyncio.new_event_loop()
+        asyncio.set_event_loop(loop)
+        while not self.shutdown_flag.is_set():
+            self.running = True
+            ts = time.time()
+            loop.run_until_complete(asyncio.gather(
+                self.robot.wacc.pull_status_async(),
+                self.robot.base.pull_status_async(),
+                self.robot.lift.pull_status_async(),
+                self.robot.arm.pull_status_async(),
+                self.robot.pimu.pull_status_async()))
+            self.timer_stats.update_rate()
+            if not self.shutdown_flag.is_set():
+                time.sleep(max(0.001, (1 / self.update_rate_hz) - (time.time() - ts)))
+        print('Shutting down NonDXLStatusThread')
 
-        self.robot_update_rate_hz = 25.0  #Hz
-        self.monitor_downrate_int = 5  # Step the monitor at every Nth iteration
-        self.collision_downrate_int = 5  # Step the monitor at every Nth iteration
-        self.sentry_downrate_int = 2  # Step the sentry at every Nth iteration
+class RobotSafetyThread(threading.Thread):
+    """
+    Do  pull_status data from the dxl devices
+    """
+    def __init__(self,robot):
+        threading.Thread.__init__(self)
+        self.robot=robot
+        self.update_rate_hz = 10.0  #Hz
+        self.sentry_downrate_int = 1  # Step the sentry at every Nth iteration
+        self.collision_downrate_int = 2  # Step the sentry at every Nth iteration
+        self.monitor_downrate_int = 2  # Step the sentry at every Nth iteration
+        self.timer_stats = hello_utils.TimerStats()
+        self.shutdown_flag = threading.Event()
+        self.running=False
         if self.robot.params['use_monitor']:
             self.robot.monitor.startup()
         if self.robot.params['use_collision_manager']:
             self.robot.collision.startup()
-        self.shutdown_flag = threading.Event()
-        self.timer_stats = hello_utils.TimerStats()
         self.titr=0
-        self.first_status = False
-
     def run(self):
         while not self.shutdown_flag.is_set():
+            self.running = True
             ts = time.time()
-            self.robot._pull_status_non_dynamixel()
-            self.first_status = True
 
             if self.robot.params['use_monitor']:
                 if (self.titr % self.monitor_downrate_int) == 0:
                     self.robot.monitor.step()
-
             if self.robot.params['use_collision_manager']:
                     self.robot.collision.step()
-
             if self.robot.params['use_sentry']:
                 if (self.titr % self.sentry_downrate_int) == 0:
-                    self.robot._step_sentry()
-
-            self.titr=self.titr+1
-            te = time.time()
-            tsleep = max(0.001, (1 / self.robot_update_rate_hz) - (te - ts))
+                    self.robot.head.step_sentry(self)
+                    self.robot.base.step_sentry(self)
+                    self.robot.arm.step_sentry(self)
+                    self.robot.lift.step_sentry(self)
+                    self.robot.end_of_arm.step_sentry(self)
+            self.timer_stats.update_rate()
             if not self.shutdown_flag.is_set():
-                time.sleep(tsleep)
-        print('Shutting down RobotThread')
+                time.sleep(max(0.001, (1 / self.update_rate_hz) - (time.time() - ts)))
+        print('Shutting down RobotSafetyThread')
 
 
 class Robot(Device):
@@ -153,28 +173,28 @@ class Robot(Device):
             if self.devices[k] is not None:
                 if not self.devices[k].startup():
                     pass
-                #    print('Startup failure on %s. Exiting.'%k)
-                #    exit()
 
 
         # Register the signal handlers
         signal.signal(signal.SIGTERM, hello_utils.thread_service_shutdown)
         signal.signal(signal.SIGINT, hello_utils.thread_service_shutdown)
 
-        self.rt = RobotThread(self)
-        self.rt.setDaemon(True)
-        self.rt.start()
+        self.rst = RobotSafetyThread(self)
+        self.rst.setDaemon(True)
+        self.rst.start()
 
-        self.dt = RobotDynamixelThread(self)
-        self.dt.setDaemon(True)
-        self.dt.start()
+        self.dxt = DXLStatusThread(self)
+        self.dxt.setDaemon(True)
+        self.dxt.start()
+
+        self.ndt = NonDXLStatusThread(self)
+        self.ndt.setDaemon(True)
+        self.ndt.start()
 
         # Wait for status reading threads to start reading data
         ts=time.time()
-        while not self.rt.first_status and not self.dt.first_status and time.time()-ts<3.0:
+        while not self.rst.running and not self.dxt.running and not self.ndt.running and time.time()-ts<3.0:
            time.sleep(0.1)
-        #if not self.rt.first_status  or not self.dt.first_status :
-        #    self.logger.warning('Failed to startup up robot threads')
 
     def stop(self):
         """
@@ -182,12 +202,15 @@ class Robot(Device):
         Cleanly stops down motion and communication
         """
         print('---- Shutting down robot ----')
-        if self.rt is not None:
-            self.rt.shutdown_flag.set()
-            self.rt.join(1)
-        if self.dt is not None:
-            self.dt.shutdown_flag.set()
-            self.dt.join(1)
+        if self.rdt is not None:
+            self.rdt.shutdown_flag.set()
+            self.rdt.join(1)
+        if self.dxt is not None:
+            self.dxt.shutdown_flag.set()
+            self.dxt.join(1)
+        if self.ndt is not None:
+            self.ndt.shutdown_flag.set()
+            self.ndt.join(1)
         for k in self.devices.keys():
             if self.devices[k] is not None:
                 print('Shutting down',k)
@@ -210,17 +233,18 @@ class Robot(Device):
         print('Batch', self.params['batch_name'])
         hello_utils.pretty_print_dict('Status',s)
 
-
     def push_command(self):
         """
         Cause all queued up RPC commands to be sent down to Devices
         """
         with self.lock:
-            self.base.push_command()
-            self.arm.push_command()
-            self.lift.push_command()
-            self.pimu.push_command()
-            self.wacc.push_command()
+            loop = asyncio.get_event_loop()
+            loop.run_until_complete(asyncio.gather(
+                self.wacc.push_command_async(),
+                self.base.push_command_async(),
+                self.lift.push_command_async(),
+                self.arm.push_command_async(),
+                self.pimu.push_command_async()))
             self.pimu.trigger_motor_sync()
 
 # ##################Home and Stow #######################################
@@ -316,25 +340,5 @@ class Robot(Device):
         #Let user know it is done
         self.pimu.trigger_beep()
         self.push_command()
-    # ################ Helpers #################################
 
-    def _pull_status_dynamixel(self):
-        try:
-            self.end_of_arm.pull_status()
-            self.head.pull_status()
-        except SerialException:
-            print('Serial Exception on Robot Step_Dynamixel')
 
-    def _pull_status_non_dynamixel(self):
-        self.wacc.pull_status()
-        self.base.pull_status()
-        self.lift.pull_status()
-        self.arm.pull_status()
-        self.pimu.pull_status()
-
-    def _step_sentry(self):
-        self.head.step_sentry(self)
-        self.base.step_sentry(self)
-        self.arm.step_sentry(self)
-        self.lift.step_sentry(self)
-        self.end_of_arm.step_sentry(self)
