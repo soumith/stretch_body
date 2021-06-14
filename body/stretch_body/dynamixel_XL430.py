@@ -4,8 +4,8 @@ import array as arr
 import logging
 
 from dynamixel_sdk.robotis_def import *
-import stretch_body.dynamixel_port_handler_async as prh
-import stretch_body.dynamixel_packet_handler_async as pch
+import dynamixel_sdk.dynamixel_port_handler as prh
+import dynamixel_sdk.dynamixel_packet_handler as pch
 import threading
 import serial
 
@@ -120,12 +120,12 @@ class DynamixelXL430():
         self.packet_handler=None
         try:
             if port_handler is None:
-                self.port_handler = prh.PortHandlerAsync(usb)
+                self.port_handler = prh.PortHandler(usb)
                 self.port_handler.openPort()
                 self.port_handler.setBaudRate(baud)
             else:
                 self.port_handler = port_handler
-            self.packet_handler = pch.PacketHandlerAsync(2.0)
+            self.packet_handler = pch.PacketHandler(2.0)
         except serial.SerialException as e:
             self.logger.error("SerialException({0}): {1}".format(e.errno, e.strerror))
         self.hw_valid = self.packet_handler is not None
@@ -147,10 +147,10 @@ class DynamixelXL430():
             the baud rate the Dynamixel is communicating at
         """
         for b in BAUD_MAP.keys():
-            port_h = prh.PortHandlerAsync(usb)
+            port_h = prh.PortHandler(usb)
             port_h.openPort()
             port_h.setBaudRate(b)
-            packet_h = pch.PacketHandlerAsync(2.0)
+            packet_h = pch.PacketHandler(2.0)
             _, dxl_comm_result, _ = packet_h.ping(port_h, dxl_id)
             port_h.closePort()
             if dxl_comm_result == COMM_SUCCESS:
