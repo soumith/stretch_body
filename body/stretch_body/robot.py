@@ -53,7 +53,7 @@ class NonDXLStatusThread(threading.Thread):
     def __init__(self,robot):
         threading.Thread.__init__(self)
         self.robot=robot
-        self.update_rate_hz = 25.0  #Hz
+        self.update_rate_hz = 20.0  #Hz
         self.shutdown_flag = threading.Event()
         self.stats = hello_utils.LoopStats(loop_name='NonDXLStatusThread',target_loop_rate=self.update_rate_hz)
         self.running = False

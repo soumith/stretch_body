@@ -12,19 +12,19 @@ import stretch_body.robot as robot
 d=stretch_body.device.Device() #Create logger
 
 class TestTimingStats(unittest.TestCase):
-    # def test_faux_loop(self):
-    #     print('Starting test_faux_loop ')
-    #     target_loop_rate = 25.0
-    #     s = hello_utils.LoopStats(loop_name='TestLoop', target_loop_rate=target_loop_rate)
-    #     for i in range(200):
-    #         s.mark_loop_start()
-    #         time.sleep(0.5/ target_loop_rate) #Executing some computation
-    #         s.mark_loop_end()
-    #         noise_pct = random.random()*0.1
-    #         time.sleep(s.get_loop_sleep_time()*(1+noise_pct)) #Add jitter due to 'threading', etc
-    #     s.pretty_print()
-    #     s.display_rate_histogram()
-    #     self.assertTrue(s.status['loop_warns'] == 0)
+    def test_faux_loop(self):
+        print('Starting test_faux_loop ')
+        target_loop_rate = 25.0
+        s = hello_utils.LoopStats(loop_name='TestLoop', target_loop_rate=target_loop_rate)
+        for i in range(200):
+            s.mark_loop_start()
+            time.sleep(0.5/ target_loop_rate) #Executing some computation
+            s.mark_loop_end()
+            noise_pct = random.random()*0.1
+            time.sleep(s.get_loop_sleep_time()*(1+noise_pct)) #Add jitter due to 'threading', etc
+        s.pretty_print()
+        #s.display_rate_histogram()
+        self.assertTrue(s.status['loop_warns'] == 0)
 
     def test_robot_loops(self):
         print('Starting test_robot_loops')
