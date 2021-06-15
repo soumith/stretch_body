@@ -31,18 +31,19 @@ class DXLStatusThread(threading.Thread):
         threading.Thread.__init__(self)
         self.robot=robot
         self.update_rate_hz = 15.0  #Hz
-        self.timer_stats = hello_utils.TimerStats()
+        self.stats = hello_utils.LoopStats(loop_name='DXLStatusThread',target_loop_rate=self.update_rate_hz)
         self.shutdown_flag = threading.Event()
         self.running=False
     def run(self):
         while not self.shutdown_flag.is_set():
+            self.stats.mark_loop_start()
             self.running = True
             ts = time.time()
             self.robot.end_of_arm.pull_status()
             self.robot.head.pull_status()
-            self.timer_stats.update_rate()
+            self.stats.mark_loop_end()
             if not self.shutdown_flag.is_set():
-                time.sleep(max(0.001, (1 / self.update_rate_hz) - (time.time() - ts)))
+                time.sleep(self.stats.get_loop_sleep_time())
         print('Shutting down DXLStatusThread')
 
 class NonDXLStatusThread(threading.Thread):
@@ -54,12 +55,13 @@ class NonDXLStatusThread(threading.Thread):
         self.robot=robot
         self.update_rate_hz = 25.0  #Hz
         self.shutdown_flag = threading.Event()
-        self.timer_stats = hello_utils.TimerStats()
+        self.stats = hello_utils.LoopStats(loop_name='NonDXLStatusThread',target_loop_rate=self.update_rate_hz)
         self.running = False
     def run(self):
         loop = asyncio.new_event_loop()
         asyncio.set_event_loop(loop)
         while not self.shutdown_flag.is_set():
+            self.stats.mark_loop_start()
             self.running = True
             ts = time.time()
             loop.run_until_complete(asyncio.gather(
@@ -68,9 +70,9 @@ class NonDXLStatusThread(threading.Thread):
                 self.robot.lift.pull_status_async(),
                 self.robot.arm.pull_status_async(),
                 self.robot.pimu.pull_status_async()))
-            self.timer_stats.update_rate()
+            self.stats.mark_loop_end()
             if not self.shutdown_flag.is_set():
-                time.sleep(max(0.001, (1 / self.update_rate_hz) - (time.time() - ts)))
+                time.sleep(self.stats.get_loop_sleep_time())
         print('Shutting down NonDXLStatusThread')
 
 class RobotSafetyThread(threading.Thread):
@@ -84,7 +86,7 @@ class RobotSafetyThread(threading.Thread):
         self.sentry_downrate_int = 1  # Step the sentry at every Nth iteration
         self.collision_downrate_int = 2  # Step the sentry at every Nth iteration
         self.monitor_downrate_int = 2  # Step the sentry at every Nth iteration
-        self.timer_stats = hello_utils.TimerStats()
+        self.stats = hello_utils.LoopStats(loop_name='RobotSafetyThread',target_loop_rate=self.update_rate_hz)
         self.shutdown_flag = threading.Event()
         self.running=False
         if self.robot.params['use_monitor']:
@@ -94,6 +96,7 @@ class RobotSafetyThread(threading.Thread):
         self.titr=0
     def run(self):
         while not self.shutdown_flag.is_set():
+            self.stats.mark_loop_start()
             self.running = True
             ts = time.time()
 
@@ -109,9 +112,9 @@ class RobotSafetyThread(threading.Thread):
                     self.robot.arm.step_sentry(self.robot)
                     self.robot.lift.step_sentry(self.robot)
                     self.robot.end_of_arm.step_sentry(self.robot)
-            self.timer_stats.update_rate()
+            self.stats.mark_loop_end()
             if not self.shutdown_flag.is_set():
-                time.sleep(max(0.001, (1 / self.update_rate_hz) - (time.time() - ts)))
+                time.sleep(self.stats.get_loop_sleep_time())
         print('Shutting down RobotSafetyThread')
 
 
@@ -158,8 +161,9 @@ class Robot(Device):
         self.status['end_of_arm'] = self.end_of_arm.status
 
         self.devices={ 'pimu':self.pimu, 'base':self.base, 'lift':self.lift, 'arm': self.arm, 'head': self.head, 'wacc':self.wacc, 'end_of_arm':self.end_of_arm}
-        self.rt=None
-        self.dt=None
+        self.safety_thread=None
+        self.dxl_thread=None
+        self.non_dxl_thread=None
 
     # ###########  Device Methods #############
 
@@ -179,21 +183,21 @@ class Robot(Device):
         signal.signal(signal.SIGTERM, hello_utils.thread_service_shutdown)
         signal.signal(signal.SIGINT, hello_utils.thread_service_shutdown)
 
-        self.rst = RobotSafetyThread(self)
-        self.rst.setDaemon(True)
-        self.rst.start()
+        self.safety_thread = RobotSafetyThread(self)
+        self.safety_thread.setDaemon(True)
+        self.safety_thread.start()
 
-        self.dxt = DXLStatusThread(self)
-        self.dxt.setDaemon(True)
-        self.dxt.start()
+        self.dxl_thread = DXLStatusThread(self)
+        self.dxl_thread.setDaemon(True)
+        self.dxl_thread.start()
 
-        self.ndt = NonDXLStatusThread(self)
-        self.ndt.setDaemon(True)
-        self.ndt.start()
+        self.non_dxl_thread = NonDXLStatusThread(self)
+        self.non_dxl_thread.setDaemon(True)
+        self.non_dxl_thread.start()
 
         # Wait for status reading threads to start reading data
         ts=time.time()
-        while not self.rst.running and not self.dxt.running and not self.ndt.running and time.time()-ts<3.0:
+        while not self.safety_thread.running and not self.dxl_thread.running and not self.non_dxl_thread.running and time.time()-ts<3.0:
            time.sleep(0.1)
 
     def stop(self):
@@ -202,15 +206,15 @@ class Robot(Device):
         Cleanly stops down motion and communication
         """
         print('---- Shutting down robot ----')
-        if self.ndt is not None:
-            self.ndt.shutdown_flag.set()
-            self.ndt.join(1)
-        if self.dxt is not None:
-            self.dxt.shutdown_flag.set()
-            self.dxt.join(1)
-        if self.rst is not None:
-            self.rst.shutdown_flag.set()
-            self.rst.join(1)
+        if self.non_dxl_thread is not None:
+            self.non_dxl_thread.shutdown_flag.set()
+            self.non_dxl_thread.join(1)
+        if self.dxl_thread is not None:
+            self.dxl_thread.shutdown_flag.set()
+            self.dxl_thread.join(1)
+        if self.safety_thread is not None:
+            self.safety_thread.shutdown_flag.set()
+            self.safety_thread.join(1)
         for k in self.devices.keys():
             if self.devices[k] is not None:
                 print('Shutting down',k)

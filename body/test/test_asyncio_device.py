@@ -38,16 +38,6 @@ def stop_devices(p,w,s1,s2,s3,s4):
     s4.stop()
 
 class TestAsyncioDevice(unittest.TestCase):
-    def test_NonDXLStatusThread_rate(self):
-        print('Testing NonDXLStatusThread rate')
-        r = robot.Robot()
-        r.startup()
-        time.sleep(3.0)
-        rate=r.ndt.timer_stats.get_rate_hz()
-        print('NonDXLStatusThread rate of %f'%rate)
-        self.assertTrue(rate > r.ndt.update_rate_hz*0.8)
-        r.stop()
-
     def test_concurrent_access(self):
         """
         Verify zero comms errors when access the non-async pull_status

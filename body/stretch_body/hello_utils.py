@@ -114,7 +114,7 @@ def pretty_print_dict(title, d):
         if type(d[k]) == dict:
             pretty_print_dict(k, d[k])
 
-class TimingStats():
+class LoopStats():
     """
     Track timing statistics for control loops
     """
@@ -125,7 +125,7 @@ class TimingStats():
         self.ts_loop_end=None
         self.status={'loop_rate_hz':0, 'loop_rate_avg_hz':0, 'loop_rate_min_hz':1000000, 'loop_rate_std':0, 'execution_time_ms':0, 'loop_warns':0}
         self.logger = logging.getLogger()
-        self.warn_rate_hz=1.0
+        self.warn_rate_hz=0.2
         self.n_log=100
         self.log_idx=0
         self.rate_log=numpy.array([target_loop_rate]*self.n_log)
@@ -163,9 +163,9 @@ class TimingStats():
         self.sleep_time_s = (1 / self.target_loop_rate) - (self.status['execution_time_ms'] / 1000)
         if self.sleep_time_s < .001:
             self.status['loop_warns'] += 1
-            if (time.time() - self.ts_warn_last) > (1 / self.ts_warn_last):
+            if (time.time() - self.ts_warn_last) > (1 / self.warn_rate_hz):
                 self.ts_warn_last = time.time()
-                self.logger.warn('Loop %s rate execution time exceeds rate by %.2f ms' % (self.loop_name, self.sleep_time_s * 1000))
+                self.logger.warn('Target loop rate for %s not possible. Capable of %.2f ms' % (self.loop_name,(1000.0/self.status['execution_time_ms'])))
 
 
     def display_rate_histogram(self):
