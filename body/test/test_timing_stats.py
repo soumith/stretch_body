@@ -26,9 +26,24 @@ class TestTimingStats(unittest.TestCase):
         #s.display_rate_histogram()
         self.assertTrue(s.status['loop_warns'] == 0)
 
-    def test_robot_loops(self):
-        print('Starting test_robot_loops')
+    def test_robot_loops_no_async(self):
+        print('Starting test_robot_loops_no_async')
         r = robot.Robot()
+        r.params['use_asyncio']=False
+        r.startup()
+        time.sleep(3.0)
+        r.non_dxl_thread.stats.pretty_print()
+        r.dxl_thread.stats.pretty_print()
+        r.safety_thread.stats.pretty_print()
+        r.stop()
+        self.assertTrue(r.dxl_thread.stats.status['loop_warns'] == 0)
+        self.assertTrue(r.non_dxl_thread.stats.status['loop_warns'] == 0)
+        self.assertTrue(r.safety_thread.stats.status['loop_warns'] == 0)
+
+    def test_robot_loops_async(self):
+        print('Starting test_robot_loops_async')
+        r = robot.Robot()
+        r.params['use_asyncio'] = True
         r.startup()
         time.sleep(3.0)
         r.non_dxl_thread.stats.pretty_print()

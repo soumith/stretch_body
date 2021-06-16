@@ -7,6 +7,7 @@ factory_params = {
     "robot": {
         "tool": "tool_stretch_gripper",
         "use_collision_manager": 0,
+        'use_asyncio': 1
     },
     "robot_sentry": {
         "dynamixel_stop_on_runstop": 1,

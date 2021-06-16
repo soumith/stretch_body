@@ -66,16 +66,23 @@ class NonDXLStatusThread(threading.Thread):
             self.stats.mark_loop_start()
             self.running = True
             ts = time.time()
-            loop.run_until_complete(asyncio.gather(
-                self.robot.wacc.pull_status_async(),
-                self.robot.base.pull_status_async(),
-                self.robot.lift.pull_status_async(),
-                self.robot.arm.pull_status_async(),
-                self.robot.pimu.pull_status_async()))
+            if self.robot.params['use_asyncio']:
+                loop.run_until_complete(asyncio.gather(
+                    self.robot.wacc.pull_status_async(),
+                    self.robot.base.pull_status_async(),
+                    self.robot.lift.pull_status_async(),
+                    self.robot.arm.pull_status_async(),
+                    self.robot.pimu.pull_status_async()))
+            else:
+                self.robot.wacc.pull_status()
+                self.robot.base.pull_status()
+                self.robot.lift.pull_status()
+                self.robot.arm.pull_status()
+                self.robot.pimu.pull_status()
             self.stats.mark_loop_end()
             if not self.shutdown_flag.is_set():
                 time.sleep(self.stats.get_loop_sleep_time())
-        print('Shutting down NonDXLStatusThread')
+        self.logger.debug('Shutting down NonDXLStatusThread')
 
 class RobotSafetyThread(threading.Thread):
     """
@@ -245,13 +252,20 @@ class Robot(Device):
         Cause all queued up RPC commands to be sent down to Devices
         """
         with self.lock:
-            loop = asyncio.get_event_loop()
-            loop.run_until_complete(asyncio.gather(
-                self.wacc.push_command_async(),
-                self.base.push_command_async(),
-                self.lift.push_command_async(),
-                self.arm.push_command_async(),
-                self.pimu.push_command_async()))
+            if self.params['use_asyncio']:
+                loop = asyncio.get_event_loop()
+                loop.run_until_complete(asyncio.gather(
+                    self.wacc.push_command_async(),
+                    self.base.push_command_async(),
+                    self.lift.push_command_async(),
+                    self.arm.push_command_async(),
+                    self.pimu.push_command_async()))
+            else:
+                self.wacc.push_command()
+                self.base.push_command()
+                self.lift.push_command()
+                self.arm.push_command()
+                self.pimu.push_command()
             self.pimu.trigger_motor_sync()
 
 # ##################Home and Stow #######################################
