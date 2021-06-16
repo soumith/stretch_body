@@ -80,7 +80,7 @@ class Arm(Device):
         """
         if req_calibration:
             if not self.motor.status['pos_calibrated']:
-                self.logger.warn('Arm not calibrated')
+                self.logger.warning('Arm not calibrated')
                 return
             x_m = min(max(self.soft_motion_limits[0], x_m), self.soft_motion_limits[1]) #Only clip motion when calibrated
 
@@ -130,7 +130,7 @@ class Arm(Device):
         """
         if req_calibration:
             if not self.motor.status['pos_calibrated']:
-                self.logger.warn('Arm not calibrated')
+                self.logger.warning('Arm not calibrated')
                 return
 
             if self.status['pos'] + x_m < self.soft_motion_limits[0]:  #Only clip motion when calibrated
@@ -204,7 +204,7 @@ class Arm(Device):
         Home to hardstops
         """
         if not self.motor.hw_valid:
-            self.logger.warn('Not able to home arm. Hardware not present')
+            self.logger.warning('Not able to home arm. Hardware not present')
             return
         print('Homing Arm...')
         self.motor.enable_guarded_mode()
@@ -245,18 +245,18 @@ class Arm(Device):
                         if abs(self.status['pos'] - self.params['range_m'][1]) < .010:  # Within 1 cm
                             success = True
                         else:
-                            self.logger.warn('Arm homing failed. Out of range')
+                            self.logger.warning('Arm homing failed. Out of range')
                             success = False
                     else:
                         extension_m=self.status['pos']
                         success=True
                 else:
-                    self.logger.warn('Arm homing failed. Failed to detect contact')
+                    self.logger.warning('Arm homing failed. Failed to detect contact')
                     success = False
             else:
                 success = True
         else:
-            self.logger.warn('Arm homing failed. Failed to detect contact')
+            self.logger.warning('Arm homing failed. Failed to detect contact')
             success = False
 
         if success:

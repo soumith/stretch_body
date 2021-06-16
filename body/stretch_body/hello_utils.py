@@ -165,7 +165,7 @@ class LoopStats():
             self.status['loop_warns'] += 1
             if (time.time() - self.ts_warn_last) > (1 / self.warn_rate_hz):
                 self.ts_warn_last = time.time()
-                self.logger.warn('Target loop rate for %s not possible. Capable of %.2f ms' % (self.loop_name,(1000.0/self.status['execution_time_ms'])))
+                self.logger.warning('Target loop rate for %s not possible. Capable of %.2f ms' % (self.loop_name,(1000.0/self.status['execution_time_ms'])))
 
 
     def display_rate_histogram(self):

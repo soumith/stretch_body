@@ -13,7 +13,7 @@ import stretch_body.lift as lift
 import stretch_body.pimu as pimu
 import stretch_body.head as head
 import stretch_body.wacc as wacc
-import stretch_body.end_of_arm as end_of_arm
+import logging
 import stretch_body.hello_utils as hello_utils
 
 from serial import SerialException
@@ -34,6 +34,7 @@ class DXLStatusThread(threading.Thread):
         self.stats = hello_utils.LoopStats(loop_name='DXLStatusThread',target_loop_rate=self.update_rate_hz)
         self.shutdown_flag = threading.Event()
         self.running=False
+        self.logger = logging.getLogger()
     def run(self):
         while not self.shutdown_flag.is_set():
             self.stats.mark_loop_start()
@@ -44,7 +45,7 @@ class DXLStatusThread(threading.Thread):
             self.stats.mark_loop_end()
             if not self.shutdown_flag.is_set():
                 time.sleep(self.stats.get_loop_sleep_time())
-        print('Shutting down DXLStatusThread')
+        self.logger.debug('Shutting down DXLStatusThread')
 
 class NonDXLStatusThread(threading.Thread):
     """
@@ -57,6 +58,7 @@ class NonDXLStatusThread(threading.Thread):
         self.shutdown_flag = threading.Event()
         self.stats = hello_utils.LoopStats(loop_name='NonDXLStatusThread',target_loop_rate=self.update_rate_hz)
         self.running = False
+        self.logger = logging.getLogger()
     def run(self):
         loop = asyncio.new_event_loop()
         asyncio.set_event_loop(loop)
@@ -89,6 +91,7 @@ class RobotSafetyThread(threading.Thread):
         self.stats = hello_utils.LoopStats(loop_name='RobotSafetyThread',target_loop_rate=self.update_rate_hz)
         self.shutdown_flag = threading.Event()
         self.running=False
+        self.logger = logging.getLogger()
         if self.robot.params['use_monitor']:
             self.robot.monitor.startup()
         if self.robot.params['use_collision_manager']:
@@ -115,7 +118,7 @@ class RobotSafetyThread(threading.Thread):
             self.stats.mark_loop_end()
             if not self.shutdown_flag.is_set():
                 time.sleep(self.stats.get_loop_sleep_time())
-        print('Shutting down RobotSafetyThread')
+        self.logger.debug('Shutting down RobotSafetyThread')
 
 
 class Robot(Device):
@@ -217,9 +220,9 @@ class Robot(Device):
             self.safety_thread.join(1)
         for k in self.devices.keys():
             if self.devices[k] is not None:
-                print('Shutting down',k)
+                self.logger.debug('Shutting down %s'%k)
                 self.devices[k].stop()
-        print('---- Shutdown complete ----')
+        self.logger.debug('---- Shutdown complete ----')
 
     def get_status(self):
         """

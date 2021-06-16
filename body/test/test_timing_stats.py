@@ -34,10 +34,10 @@ class TestTimingStats(unittest.TestCase):
         r.non_dxl_thread.stats.pretty_print()
         r.dxl_thread.stats.pretty_print()
         r.safety_thread.stats.pretty_print()
-        #r.non_dxl_thread.stats.display_rate_histogram()
-        #print('NonDXLStatusThread rate of %f' % rate)
-        #self.assertTrue(rate > r.ndt.update_rate_hz * 0.8)
         r.stop()
+        self.assertTrue(r.dxl_thread.stats.status['loop_warns'] == 0)
+        self.assertTrue(r.non_dxl_thread.stats.status['loop_warns'] == 0)
+        self.assertTrue(r.safety_thread.stats.status['loop_warns'] == 0)
 
 
 
